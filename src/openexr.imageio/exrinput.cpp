@@ -114,15 +114,15 @@ public:
     OpenEXRInputStream (char *buffer, size_t size) : Imf::IStream("blank") {
         isbuffer = true;
         buf = OIIO::no_copy_membuf(buffer, size);
+        stream = new OIIO::istream(&buf);
     }
     virtual bool read (char c[], int n) {
         if (isbuffer) { // Using in-mem file buffer
-            OIIO::istream isf(&buf);
-            if (!isf)
+            if (!stream)
                 throw Iex::InputExc("Unexpected end of file.");
 
             errno = 0;
-            isf.read (c, n);
+            stream->read (c, n);
         }
         else {
             if (!ifs) 
@@ -136,8 +136,7 @@ public:
     virtual Imath::Int64 tellg () {
         if (isbuffer)
         {
-            OIIO::istream isf(&buf);
-            return std::streamoff( isf.tellg () );
+            return std::streamoff(stream->tellg ());
         }
         else
         {
@@ -146,8 +145,7 @@ public:
     }
     virtual void seekg (Imath::Int64 pos) {
         if (isbuffer) {
-            OIIO::istream isf(&buf);
-            isf.seekg (pos);
+            stream->seekg (pos);
         }
         else {
             ifs.seekg (pos);
@@ -157,8 +155,7 @@ public:
     virtual void clear () {
         if (isbuffer)
         {
-            OIIO::istream isf(&buf);
-            isf.clear ();
+            stream->clear ();
         }
         else
             ifs.clear ();
@@ -166,21 +163,24 @@ public:
     bool isBufferTiled () {
         // Custom mirror of the IlmImf/ImfTestFile.cpp ::isOpenExrFile
         // so that we can test a memory blob for ::isTiled().
-        OIIO::istream isf(&buf);
-        int magic, version;
+        int _magic, version;
 
         signed char b[4];
-        isf.read((char *)b, 4);
-        magic = val_shift(b);
+        stream->read((char *)b, 4);
+        _magic = val_shift(b);
 
-        isf.read((char *)b, 4);
+        std::cerr << "BASE: " << Imf::MAGIC << "OUR MAGIC: " << _magic << std::endl;
+
+        stream->read((char *)b, 4);
         version = val_shift(b);
+
+        seekg(0);
 
         return Imf::isTiled(version);
     }
 
 private:
-    signed int val_shift(signed char d[4])
+    int val_shift(signed char d[4])
     {
         return (d[0] & 0x000000ff) |
               ((d[1] << 8) & 0x0000ff00) |
@@ -188,7 +188,7 @@ private:
               (d[3] << 24);
     }
     bool check_error () {
-        if (!ifs && !OIIO::istream(&buf)) {
+        if (!ifs && !stream) {
             if (errno) 
                 Iex::throwErrnoExc ();
 
@@ -198,6 +198,7 @@ private:
     }
     OIIO::ifstream ifs;
     // For in-memory based files \/
+    OIIO::istream_ptr stream;
     OIIO::no_copy_membuf buf;
     bool isbuffer;
 };
@@ -511,13 +512,12 @@ OpenEXRInput::open(ImageSpec &newspec, bool tiled)
 bool
 OpenEXRInput::open (char *buffer, size_t size, ImageSpec &newspec)
 {
-    if (!buffer || size >= 0) {
+    if (!buffer || size <= 0) {
         error("Invalid Memory Stream when opening EXR.");
         return false;
     }
 
     pvt::set_exr_threads ();
-
     m_spec = ImageSpec(); // Clear everything with default constructor
 
     try {

@@ -627,12 +627,12 @@ ImageInput::create (char *buffer, size_t size, bool do_open,
         return NULL;
     }
 
-    if (!buffer || size >= 0) {
+    if (!buffer || size <= 0) {
         pvt::error("ImageInput::create(*buffer ...) called with invalid buffer.");
         return NULL;
     }
 
-    std::string format(format_name);
+    std::string format(/*format_name*/"exr");
 
     ImageInput::Creator create_function = NULL;
     { // scope the lock:
@@ -659,12 +659,15 @@ ImageInput::create (char *buffer, size_t size, bool do_open,
         // relying on the data itself with a validate step in order to 
         formats_tried.push_back (create_function);
         ImageInput *in = (ImageInput *)create_function();
+
+
         if (! do_open && in) {
             // Special case: we don't need to return the file
             // already opened, and this ImageInput says that the
             // file is the right type.
             return in;
         }
+
         ImageSpec tmpspec;
         bool ok = in && in->open (buffer, size, tmpspec);
         if (ok) {
@@ -678,7 +681,10 @@ ImageInput::create (char *buffer, size_t size, bool do_open,
             // the code below to check every plugin we know.
             create_function = NULL;
             if (in)
+            {
                 specific_error = in->geterror();
+                std::cerr << "ERROR: " << specific_error;
+            }
         }
         delete in;
     }
