@@ -41,6 +41,7 @@
 #include <OpenEXR/ImfInputFile.h>
 #include <OpenEXR/ImfTiledInputFile.h>
 #include <OpenEXR/ImfChannelList.h>
+#include <OpenEXR/ImfVersion.h>
 #include <OpenEXR/ImfEnvmap.h>
 
 // The way that OpenEXR uses dynamic casting for attributes requires 
@@ -105,37 +106,97 @@ public:
         Filesystem::open (ifs, filename, std::ios_base::binary);
         if (!ifs) 
             Iex::throwErrnoExc ();
+        isbuffer = false;
+    }
+    OpenEXRInputStream (char *buffer, size_t size) : Imf::IStream("blank") {
+        isbuffer = true;
+        buf = OIIO::no_copy_membuf(buffer, size);
     }
     virtual bool read (char c[], int n) {
-        if (!ifs) 
-            throw Iex::InputExc ("Unexpected end of file.");
-		
-        errno = 0;
-        ifs.read (c, n);
+        if (isbuffer) { // Using in-mem file buffer
+            OIIO::istream isf(&buf);
+            if (!isf)
+                throw Iex::InputExc("Unexpected end of file.");
+
+            errno = 0;
+            isf.read (c, n);
+        }
+        else {
+            if (!ifs) 
+                throw Iex::InputExc ("Unexpected end of file.");
+
+            errno = 0;
+            ifs.read (c, n);
+        }
         return check_error ();
     }
     virtual Imath::Int64 tellg () {
-        return std::streamoff (ifs.tellg ());
+        if (isbuffer)
+        {
+            OIIO::istream isf(&buf);
+            return std::streamoff( isf.tellg () );
+        }
+        else
+        {
+            return std::streamoff(ifs.tellg());
+        }
     }
     virtual void seekg (Imath::Int64 pos) {
-        ifs.seekg (pos);
+        if (isbuffer) {
+            OIIO::istream isf(&buf);
+            isf.seekg (pos);
+        }
+        else {
+            ifs.seekg (pos);
+        }
         check_error ();
     }
     virtual void clear () {
-        ifs.clear ();
+        if (isbuffer)
+        {
+            OIIO::istream isf(&buf);
+            isf.clear ();
+        }
+        else
+            ifs.clear ();
+    }
+    bool isBufferTiled () {
+        // Custom mirror of the IlmImf/ImfTestFile.cpp ::isOpenExrFile
+        // so that we can test a memory blob for ::isTiled().
+        OIIO::istream isf(&buf);
+        int magic, version;
+
+        signed char b[4];
+        isf.read((char *)b, 4);
+        magic = val_shift(b);
+
+        isf.read((char *)b, 4);
+        version = val_shift(b);
+
+        return Imf::isTiled(version);
     }
 
 private:
+    signed int val_shift(signed char d[4])
+    {
+        return (d[0] & 0x000000ff) |
+              ((d[1] << 8) & 0x0000ff00) |
+              ((d[2] << 16) & 0x00ff0000) |
+              (d[3] << 24);
+    }
     bool check_error () {
-        if (!ifs) {
+        if (!ifs && !OIIO::istream(&buf)) {
             if (errno) 
                 Iex::throwErrnoExc ();
-			
+
             return false;
         }
         return true;
     }
     OIIO::ifstream ifs;
+    // For in-memory based files \/
+    OIIO::no_copy_membuf buf;
+    bool isbuffer;
 };
 
 
@@ -152,6 +213,7 @@ public:
     }
     virtual bool valid_file (const std::string &filename) const;
     virtual bool open (const std::string &name, ImageSpec &newspec);
+    virtual bool open (char *buffer, size_t size, ImageSpec &newspec);
     virtual bool close ();
     virtual int current_subimage (void) const { return m_subimage; }
     virtual int current_miplevel (void) const { return m_miplevel; }
@@ -176,6 +238,7 @@ public:
                                          DeepData &deepdata);
 
 private:
+    bool open (ImageSpec &newspec, bool tiled);
     struct PartInfo {
         bool initialized;
         ImageSpec spec;
@@ -384,6 +447,12 @@ OpenEXRInput::open (const std::string &name, ImageSpec &newspec)
         return false;
     }
 
+    return open(newspec, tiled);
+}
+
+bool
+OpenEXRInput::open(ImageSpec &newspec, bool tiled)
+{
 #ifdef USE_OPENEXR_VERSION2
     try {
         m_input_multipart = new Imf::MultiPartInputFile (*m_input_stream);
@@ -435,6 +504,33 @@ OpenEXRInput::open (const std::string &name, ImageSpec &newspec)
     return ok;
 }
 
+
+bool
+OpenEXRInput::open (char *buffer, size_t size, ImageSpec &newspec)
+{
+    if (!buffer || size >= 0) {
+        error("Invalid Memory Stream when opening EXR.");
+        return false;
+    }
+
+    pvt::set_exr_threads ();
+
+    m_spec = ImageSpec(); // Clear everything with default constructor
+
+    try {
+        m_input_stream = new OpenEXRInputStream (buffer, size);
+    } catch (const std::exception &e) {
+        m_input_stream = NULL;
+        error ("OpenEXR exception: %s", e.what());
+        return false;
+    } catch (...) {
+        m_input_stream = NULL;
+        error ("OpenEXR exception: unknown");
+        return false;
+    }
+
+    return open(newspec, m_input_stream->isBufferTiled());
+}
 
 
 // Count number of MIPmap levels

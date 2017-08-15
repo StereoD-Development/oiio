@@ -37,6 +37,7 @@
 #include <boost/thread/tss.hpp>
 
 #include <tiffio.h>
+#include <tiffio.hxx>
 
 #include <OpenImageIO/dassert.h>
 #include <OpenImageIO/typedesc.h>
@@ -116,6 +117,9 @@ public:
     virtual bool open (const std::string &name, ImageSpec &newspec);
     virtual bool open (const std::string &name, ImageSpec &newspec,
                        const ImageSpec &config);
+    virtual bool open (char *buffer, size_t size, ImageSpec &newspec);
+    virtual bool open (char *buffer, size_t size, ImageSpec &newspec,
+                       const ImageSpec &config);
     virtual bool close ();
     virtual int current_subimage (void) const {
         // If m_emulate_mipmap is true, pretend subimages are mipmap levels
@@ -166,6 +170,11 @@ private:
     std::vector<unsigned short> m_colormap;  ///< Color map for palette images
     std::vector<uint32_t> m_rgbadata; ///< Sometimes we punt
 
+    // For in-memory storage
+    OIIO::istream_ptr m_stream;  ///< Memory Stream Pointer
+    OIIO::no_copy_membuf m_buf;  ///< Copy-less Memory Buffer
+    bool m_isbuffer;             ///< Check for when using memory buffer
+
     // Reset everything to initial state
     void init () {
         m_tif = NULL;
@@ -179,6 +188,8 @@ private:
         m_testopenconfig = false;
         m_colormap.clear();
         m_use_rgba_interface = false;
+        m_isbuffer = false;
+        m_stream = nullptr;
     }
 
     void close_tif () {
@@ -189,6 +200,10 @@ private:
                 std::vector<uint32_t>().swap(m_rgbadata); // release
         }
     }
+
+    // Based on the config passed in handle various settings that
+    // our plugin understands how to manage.
+    void handle_config(const ImageSpec &config);
 
     // Read tags from the current directory of m_tif and fill out spec.
     // If read_meta is false, assume that m_spec already contains valid
@@ -472,9 +487,8 @@ TIFFInput::open (const std::string &name, ImageSpec &newspec)
 
 
 
-bool
-TIFFInput::open (const std::string &name, ImageSpec &newspec,
-                 const ImageSpec &config)
+void
+TIFFInput::handle_config(const ImageSpec &config)
 {
     // Check 'config' for any special requests
     if (config.get_int_attribute("oiio:UnassociatedAlpha", 0) == 1)
@@ -486,7 +500,39 @@ TIFFInput::open (const std::string &name, ImageSpec &newspec,
     // OIIO components.
     if (config.get_int_attribute("oiio:DebugOpenConfig!", 0))
         m_testopenconfig = true;
+}
+
+
+bool
+TIFFInput::open (const std::string &name, ImageSpec &newspec,
+                 const ImageSpec &config)
+{
+    handle_config (config);
     return open (name, newspec);
+}
+
+
+
+bool
+TIFFInput::open (char *buffer, size_t size, ImageSpec &newspec)
+{
+    oiio_tiff_set_error_handler ();
+    init ();
+    m_filename = std::string ("MemoryBuffer"); // Doesn't point to anything.
+    m_buf = OIIO::no_copy_membuf (buffer, size);
+    m_stream = new OIIO::istream (&m_buf);
+    m_subimage = -1;
+    return seek_subimage(0, 0, newspec);
+}
+
+
+
+bool
+TIFFInput::open (char *buffer, size_t size, ImageSpec &newspec,
+                 const ImageSpec &config)
+{
+    handle_config (config);
+    return open (buffer, size, newspec);
 }
 
 
@@ -519,12 +565,19 @@ TIFFInput::seek_subimage (int subimage, int miplevel, ImageSpec &newspec)
     bool read_meta = !(m_emulate_mipmap && m_tif && m_subimage >= 0);
 
     if (! m_tif) {
+        if (m_isbuffer) {
+            // We're reading from a chunk of memory. Using the stream we
+            // can use it as though we were reading from a file.
+            m_tif = TIFFStreamOpen(m_filename.c_str(), m_stream);
+        }
+        else {
 #ifdef _WIN32
-        std::wstring wfilename = Strutil::utf8_to_utf16 (m_filename);
-        m_tif = TIFFOpenW (wfilename.c_str(), "rm");
+            std::wstring wfilename = Strutil::utf8_to_utf16 (m_filename);
+            m_tif = TIFFOpenW (wfilename.c_str(), "rm");
 #else
-        m_tif = TIFFOpen (m_filename.c_str(), "rm");
+            m_tif = TIFFOpen (m_filename.c_str(), "rm");
 #endif
+        }
         if (m_tif == NULL) {
             std::string e = oiio_tiff_last_error();
             error ("Could not open file: %s", e.length() ? e : m_filename);
@@ -534,7 +587,7 @@ TIFFInput::seek_subimage (int subimage, int miplevel, ImageSpec &newspec)
     }
     
     m_next_scanline = 0;   // next scanline we'll read
-    if (TIFFSetDirectory (m_tif, subimage)) {
+    if (m_isbuffer || TIFFSetDirectory (m_tif, subimage)) {
         m_subimage = subimage;
         readspec (read_meta);
         // OK, some edge cases we just don't handle. For those, fall back on

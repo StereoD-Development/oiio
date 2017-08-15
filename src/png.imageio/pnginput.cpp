@@ -36,6 +36,8 @@
 
 #include "png_pvt.h"
 
+#define PNGSIGSIZE 8
+
 OIIO_PLUGIN_NAMESPACE_BEGIN
 
 
@@ -47,6 +49,9 @@ public:
     virtual bool valid_file (const std::string &filename) const;
     virtual bool open (const std::string &name, ImageSpec &newspec);
     virtual bool open (const std::string &name, ImageSpec &newspec,
+                       const ImageSpec &config);
+    virtual bool open (char *buffer, size_t size, ImageSpec &newspec);
+    virtual bool open (char *buffer, size_t size, ImageSpec &newspec,
                        const ImageSpec &config);
     virtual bool close ();
     virtual int current_subimage (void) const { return m_subimage; }
@@ -65,6 +70,9 @@ private:
     Imath::Color3f m_bg;              ///< Background color
     int m_next_scanline;
     bool m_keep_unassociated_alpha;   ///< Do not convert unassociated alpha
+
+    // For in-memory blobs \/
+    OIIO::no_copy_membuf buf;
 
     /// Reset everything to initial state
     ///
@@ -178,6 +186,64 @@ PNGInput::open (const std::string &name, ImageSpec &newspec,
     return open (name, newspec);
 }
 
+
+
+bool
+PNGInput::open (char *buffer, size_t size, ImageSpec &newspec)
+{
+    png_byte pngsig[8];
+    int is_png = 0;
+
+    buf = OIIO::no_copy_membuf(buffer, size);
+    OIIO::istream isf(&buf);
+
+    // Read 8 bytes from our new stream.
+    isf.read((char *)pngsig, PNGSIGSIZE);
+
+    if (! isf.good()) {
+        error ("Bad PNG buffer.");
+        return false;
+    }
+
+    is_png = png_sig_cmp(pngsig, 0, PNGSIGSIZE);
+    if (is_png != 0) {
+        error ("Bad PNG buffer signature.");
+        return false;
+    }
+
+    std::string s = PNG_pvt::create_read_struct (m_png, m_info);
+    if (s.length ()) {
+        close ();
+        error ("%s", s.c_str ());
+        return false;
+    }
+
+    // We set the custom read function up so that OIIO can use
+    // our memory buffer to read.
+    png_set_read_fn (m_png, (png_voidp)&buf, PNG_pvt::read_buffer_data);
+    png_set_sig_bytes (m_png, PNGSIGSIZE);  // already read 8 bytes
+
+    PNG_pvt::read_info (m_png, m_info, m_bit_depth, m_color_type,
+                        m_interlace_type, m_bg, m_spec,
+                        m_keep_unassociated_alpha);
+
+    newspec = spec ();
+    m_next_scanline = 0;
+
+    return true;
+}
+
+
+
+bool
+PNGInput::open (char *buffer, size_t size, ImageSpec &newspec,
+                const ImageSpec &config)
+{
+    // Check 'config' for any special requests
+    if (config.get_int_attribute("oiio:UnassociatedAlpha", 0) == 1)
+        m_keep_unassociated_alpha = true;
+    return open (buffer, size, newspec);
+}
 
 
 bool

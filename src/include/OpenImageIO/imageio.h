@@ -432,6 +432,16 @@ public:
     static ImageInput *open (const std::string &filename,
                              const ImageSpec *config = NULL);
 
+    /// Given a blob of memory as a buffer, either mem-mapped or streamed
+    /// in, open the file as though we gave it a filename. Use the
+    /// format_name provided to work with our known plugins. This is great
+    /// for fast-decompression when many images have been loaded into
+    /// memory. Depending on the format, this may help with the overall
+    /// footprint.
+    static ImageInput *open (char *buffer, size_t size,
+                             const char *format_name,
+                             const ImageSpec *config = NULL);
+
     /// Create and return an ImageInput implementation that is willing
     /// to read the given file.  The plugin_searchpath parameter is a
     /// colon-separated list of directories to search for ImageIO plugin
@@ -506,6 +516,12 @@ public:
     /// just to ignore config and call regular open(name,newspec).
     virtual bool open (const std::string &name, ImageSpec &newspec,
                        const ImageSpec & /*config*/) { return open(name,newspec); }
+
+    /// The ability to read and work with an in-memory chunk of data that
+    /// represents the files themselves.
+    virtual bool open (char *buffer, size_t size, ImageSpec &newspec) { return false; };
+    virtual bool open (char *buffer, size_t size, ImageSpec &newspec,
+                       const ImageSpec & /*config*/) { return open(buffer,size,newspec); }
 
     /// Return a reference to the image format specification of the
     /// current subimage/MIPlevel.  Note that the contents of the spec
@@ -794,7 +810,6 @@ public:
     /// spec.depth pixels, all channels, into deepdata.
     virtual bool read_native_deep_image (DeepData &deepdata);
 
-
     /// General message passing between client and image input server
     ///
     virtual int send_to_input (const char *format, ...);
@@ -840,6 +855,8 @@ private:
     void append_error (const std::string& message) const; // add to m_errmessage
     static ImageInput *create (const std::string &filename, bool do_open,
                                const std::string &plugin_searchpath);
+    static ImageInput *create (char *buffer, size_t size, bool do_open,
+                               const std::string &format_name);
 
 };
 

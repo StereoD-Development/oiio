@@ -285,6 +285,19 @@ read_into_buffer (png_structp& sp, png_infop& ip, ImageSpec& spec,
 
 
 
+/// PNG way of reading data from alternate sources. In our case, we use blobbed
+/// memory so that we can host compressed files. (i.e. pulled from a server) and
+/// uncompress them on demand.
+inline void
+read_buffer_data(png_structp sp, png_bytep data, size_t length)
+{
+    png_voidp iop = png_get_io_ptr(sp);
+    OIIO::istream isf(((OIIO::no_copy_membuf*)iop));
+    isf.read((char*)data, length);
+}
+
+
+
 /// Reads the next scanline from an open PNG file into the indicated buffer.
 /// \return empty string on success, error message on failure.
 ///

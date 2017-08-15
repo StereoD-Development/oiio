@@ -72,6 +72,22 @@ typedef std::ifstream ifstream;
 typedef std::ofstream ofstream;
 #endif
 
+// The istream is for reading from memory blocks in a similar fashion that we take in our
+// files (ifstream/ofstream). This makes passing streamed, compressed files, in system memory
+// available to the plugin's input in the event we want to unpack on the fly.
+typedef std::istream istream;
+typedef std::istream* istream_ptr;
+
+// Using the stream above we can avoid additional copies by wrapping our memory. This is
+// what we carry around via out image inputs. This is then called within the istream to
+// call upon it when used. ( e.g. OIIO::istream my_stream(&object_wide_no_copy_buffer)) )
+struct no_copy_membuf : std::streambuf {
+    no_copy_membuf() {}
+    no_copy_membuf(char *data, std::ptrdiff_t n) {
+        setg(data, data, data + n);
+    }
+};
+
 /// @namespace Filesystem
 ///
 /// @brief Platform-independent utilities for manipulating file names,

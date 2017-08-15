@@ -106,6 +106,36 @@ ImageInput::open (const std::string &filename,
 
 
 
+ImageInput *
+ImageInput::open (char *buffer, size_t size,
+                  const char *format_name, const ImageSpec *config)
+{
+    if (config == NULL) {
+        // Similar to above. This is a create-with-open. We just don't need
+        // to do any plugin searching, instead we should have utilized the
+        // format_name of the proper plugin when opening and reading into
+        // memory.
+        return ImageInput::create (buffer, size, true, format_name);
+    }
+
+    // With config, create without open, then open with config
+    ImageInput *in = ImageInput::create (buffer, size, false, format_name);
+    if (! in)
+        return NULL;
+
+    ImageSpec newspec;
+    if (in->open (buffer, size, newspec, *config))
+        return in;
+
+    std::string err = in->geterror();
+    if (err.size())
+        pvt::error ("%s", err.c_str());
+    delete in;
+    return NULL;
+}
+
+
+
 bool 
 ImageInput::read_scanline (int y, int z, TypeDesc format, void *data,
                            stride_t xstride)
