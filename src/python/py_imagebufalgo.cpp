@@ -244,6 +244,16 @@ IBA_deep_merge (ImageBuf &dst, const ImageBuf &A, const ImageBuf &B,
 
 
 bool
+IBA_deep_holdout (ImageBuf &dst, const ImageBuf &src, const ImageBuf &holdout,
+                  ROI roi, int nthreads)
+{
+    ScopedGILRelease gil;
+    return ImageBufAlgo::deep_holdout (dst, src, holdout, roi, nthreads);
+}
+
+
+
+bool
 IBA_copy (ImageBuf &dst, const ImageBuf &src, TypeDesc::BASETYPE convert,
           ROI roi, int nthreads)
 {
@@ -1012,8 +1022,8 @@ IBA_colorconvert (ImageBuf &dst, const ImageBuf &src,
                   ROI roi = ROI::All(), int nthreads = 0)
 {
     ScopedGILRelease gil;
-    return ImageBufAlgo::colorconvert (dst, src, from, to,
-                                       unpremult, NULL, roi, nthreads);
+    return ImageBufAlgo::colorconvert (dst, src, from, to, unpremult,
+                                       "", "", nullptr, roi, nthreads);
 }
 
 
@@ -1518,6 +1528,11 @@ void declare_imagebufalgo()
              (arg("dst"), arg("A"), arg("B"), arg("occlusion_cull")=true,
               arg("roi")=ROI::All(), arg("nthreads")=0))
         .staticmethod("deep_merge")
+
+        .def("deep_holdout", IBA_deep_holdout,
+             (arg("dst"), arg("src"), arg("holdout"),
+              arg("roi")=ROI::All(), arg("nthreads")=0))
+        .staticmethod("deep_holdout")
 
         .def("copy", IBA_copy,
              (arg("dst"), arg("src"), arg("convert")=TypeDesc::UNKNOWN,

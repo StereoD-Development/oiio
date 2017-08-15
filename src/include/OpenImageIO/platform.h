@@ -101,12 +101,13 @@
 // packages is compiling against OIIO and using these headers (OIIO may be
 // C++11 but the client package may be older, or vice versa -- use these two
 // symbols to differentiate these cases, when important).
-#if (__cplusplus >= 201402L)
-#  define OIIO_USING_CPP11        1 /* deprecated */
+#if (__cplusplus >= 201700L)
+#  define OIIO_CPLUSPLUS_VERSION  17
+#  define OIIO_CONSTEXPR14        constexpr
+#elif (__cplusplus >= 201402L)
 #  define OIIO_CPLUSPLUS_VERSION  14
 #  define OIIO_CONSTEXPR14        constexpr
 #elif (__cplusplus >= 201103L) || _MSC_VER >= 1900
-#  define OIIO_USING_CPP11        1 /* deprecated */
 #  define OIIO_CPLUSPLUS_VERSION  11
 #  define OIIO_CONSTEXPR14        /* not constexpr before C++14 */
 #else
@@ -265,18 +266,6 @@
 #  define OIIO_CONST_FUNC
 #endif
 
-// OIIO_NOTHROW is a function attribute that assures the compiler that
-// neither the function nor any other function it calls will throw an
-// exception. This declaration goes after the
-// function declaration:  int blah (int arg) OIIO_NOTHROW;
-#if defined(__GNUC__) || defined(__clang__) || defined(__INTEL_COMPILER) || __has_attribute(nothrow)
-#  define OIIO_NOTHROW __attribute__((nothrow))
-#elif defined(_MSC_VER)
-#  define OIIO_NOTHROW __declspec(nothrow)
-#else
-#  define OIIO_NOTHROW
-#endif
-
 // OIIO_UNUSED_OK is a function or variable attribute that assures tells the
 // compiler that it's fine for the item to appear to be unused.
 #if defined(__GNUC__) || defined(__clang__) || defined(__INTEL_COMPILER) || __has_attribute(unused)
@@ -379,6 +368,15 @@ inline bool cpu_has_popcnt() {int i[4]; cpuid(i,1,0); return (i[2] & (1<<23)) !=
 inline bool cpu_has_avx   () {int i[4]; cpuid(i,1,0); return (i[2] & (1<<28)) != 0; }
 inline bool cpu_has_f16c  () {int i[4]; cpuid(i,1,0); return (i[2] & (1<<29)) != 0; }
 inline bool cpu_has_rdrand() {int i[4]; cpuid(i,1,0); return (i[2] & (1<<30)) != 0; }
+inline bool cpu_has_avx2  () {int i[4]; cpuid(i,7,0); return (i[1] & (1<<5)) != 0; }
+inline bool cpu_has_avx512f() {int i[4]; cpuid(i,7,0); return (i[1] & (1<<16)) != 0; }
+inline bool cpu_has_avx512dq() {int i[4]; cpuid(i,7,0); return (i[1] & (1<<17)) != 0; }
+inline bool cpu_has_avx512ifma() {int i[4]; cpuid(i,7,0); return (i[1] & (1<<21)) != 0; }
+inline bool cpu_has_avx512pf() {int i[4]; cpuid(i,7,0); return (i[1] & (1<<26)) != 0; }
+inline bool cpu_has_avx512er() {int i[4]; cpuid(i,7,0); return (i[1] & (1<<27)) != 0; }
+inline bool cpu_has_avx512cd() {int i[4]; cpuid(i,7,0); return (i[1] & (1<<28)) != 0; }
+inline bool cpu_has_avx512bw() {int i[4]; cpuid(i,7,0); return (i[1] & (1<<30)) != 0; }
+inline bool cpu_has_avx512vl() {int i[4]; cpuid(i,7,0); return (i[1] & (0x80000000 /*1<<31*/)) != 0; }
 
 
 OIIO_NAMESPACE_END

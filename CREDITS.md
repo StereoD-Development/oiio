@@ -69,6 +69,7 @@ Other contributors (alphabetically):
 * Manuel Gamito
 * Ananth Garre
 * Alexandre Gauthier
+* Joesph Goldstone
 * Deepak Gopinath
 * John Haddon
 * Brian Hall
@@ -93,6 +94,7 @@ Other contributors (alphabetically):
 * Hugh Macdonald
 * Lukasz Maliszewski
 * Justina Mikonyte
+* Ray Molenkamp
 * Paul Molodowitch
 * Bastien Montagne
 * Ramon Montoya
@@ -124,6 +126,7 @@ Other contributors (alphabetically):
 * Mariusz Szczepanczyk
 * Blair Tennessy
 * Ott Tinn
+* Pino Toscano
 * Edgar Velazquez-Armendariz
 * Ghislain Antony Vaillant
 * Matteo F. Vescovi
@@ -133,6 +136,7 @@ Other contributors (alphabetically):
 * Xo Wang
 * Christoph Willing
 * Scott Wilson
+* Akihiro Yamasaki
 * Yang Yang
 * Nicholas Yue
 * Roman Zulak

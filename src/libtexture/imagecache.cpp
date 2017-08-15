@@ -603,7 +603,7 @@ void
 ImageCacheFile::init_from_spec ()
 {
     const ImageSpec &spec (this->spec(0,0));
-    const ImageIOParameter *p;
+    const ParamValue *p;
 
     // FIXME -- this should really be per-subimage
     if (spec.depth <= 1 && spec.full_depth <= 1)
@@ -1310,8 +1310,10 @@ ImageCacheImpl::check_max_files (ImageCachePerThreadInfo *thread_info)
     // looking up the filename of the first entry in the file cache.
     if (! m_file_sweep_name) {
         FilenameMap::iterator sweep = m_files.begin();
-        DASSERT (sweep != m_files.end() &&
-                "no way m_files can be empty and have too many files open");
+        if (sweep == m_files.end()) {
+            m_file_sweep_mutex.unlock();
+            return;
+        }
         m_file_sweep_name = sweep->first;
     }
 
@@ -2336,8 +2338,10 @@ ImageCacheImpl::check_max_mem (ImageCachePerThreadInfo *thread_info)
     // looking up the first entry in the tile cache.
     if (m_tile_sweep_id.empty()) {
         TileCache::iterator sweep = m_tilecache.begin();
-        DASSERT (sweep != m_tilecache.end() &&
-                "no way m_tilecache can be empty and use too much memory");
+        if (sweep == m_tilecache.end()) {
+            m_tile_sweep_mutex.unlock();
+            return;
+        }
         m_tile_sweep_id = (*sweep).first;
     }
 
@@ -2646,7 +2650,7 @@ ImageCacheImpl::get_image_info (ImageCacheFile *file,
 
     // general case -- handle anything else that's able to be found by
     // spec.find_attribute().
-    const ImageIOParameter *p = spec.find_attribute (dataname.string());
+    const ParamValue *p = spec.find_attribute (dataname.string());
     if (p && p->type().arraylen == datatype.arraylen) {
         // First test for exact type match
         if (p->type() == datatype) {

@@ -954,8 +954,8 @@ Oiiotool::express_parse_atom(const string_view expr, string_view& s, std::string
         string_view metadata = Strutil::parse_identifier (s, ":", true);
         if (metadata.size()) {
             read (img);
-            ImageIOParameter tmpparam;
-            const ImageIOParameter *p = img->spec(0,0)->find_attribute (metadata, tmpparam);
+            ParamValue tmpparam;
+            const ParamValue *p = img->spec(0,0)->find_attribute (metadata, tmpparam);
             if (p) {
                 std::string val = ImageSpec::metadata_val (*p);
                 if (p->type().basetype == TypeDesc::STRING) {
@@ -1349,6 +1349,25 @@ OiioTool::set_attribute (ImageRecRef img, string_view attribname,
         }
         return true;
     }
+    if (type == TypeDesc::TypeRational && value.find('/') != value.npos) {
+        // Special case: They are specifying a rational as "a/b", so we need
+        // to re-encode as a int32[2].
+        int v[2];
+        Strutil::parse_int (value, v[0]);
+        Strutil::parse_char (value, '/');
+        Strutil::parse_int (value, v[1]);
+        for (int s = 0, send = img->subimages();  s < send;  ++s) {
+            for (int m = 0, mend = img->miplevels(s);  m < mend;  ++m) {
+                ((*img)(s,m).specmod()).attribute (attribname, type, v);
+                img->update_spec_from_imagebuf (s, m);
+                if (! allsubimages)
+                    break;
+            }
+            if (! allsubimages)
+                break;
+        }
+        return true;
+    }
     if (type.basetype == TypeDesc::INT) {
         size_t n = type.numelements() * type.aggregate;
         std::vector<int> vals (n, 0);
@@ -1695,6 +1714,9 @@ public:
         : OiiotoolOp (ot, opname, argc, argv, 1) {
             fromspace = args[1];  tospace = args[2];
         }
+    virtual void option_defaults () {
+        options["strict"] = "1";
+    }
     virtual bool setup () {
         if (fromspace == tospace) {
             // The whole thing is a no-op. Get rid of the empty result we
@@ -1709,11 +1731,23 @@ public:
     virtual int impl (ImageBuf **img) {
         string_view contextkey = options["key"];
         string_view contextvalue = options["value"];
-        return ImageBufAlgo::colorconvert (*img[0], *img[1],
-                                           fromspace, tospace, false,
-                                           contextkey, contextvalue,
-                                           &ot.colorconfig);
+        bool strict = Strutil::from_string<int>(options["strict"]);
+        bool ok = ImageBufAlgo::colorconvert (*img[0], *img[1],
+                                              fromspace, tospace, false,
+                                              contextkey, contextvalue,
+                                              &ot.colorconfig);
+        if (!ok && !strict) {
+            // The color transform failed, but we were told not to be
+            // strict, so ignore the error and just copy destination to
+            // source.
+            std::string err = img[0]->geterror();
+            ot.warning (opname(), err);
+            // ok = ImageBufAlgo::copy (*img[0], *img[1], TypeDesc);
+            ok = img[0]->copy (*img[1]);
+        }
+        return ok;
     }
+private:
     string_view fromspace, tospace;
 };
 
@@ -3096,6 +3130,9 @@ public:
     OpResample (Oiiotool &ot, string_view opname, int argc, const char *argv[])
         : OiiotoolOp (ot, opname, argc, argv, 1) { }
     virtual int compute_subimages () { return 1; } // just the first one
+    virtual void option_defaults () {
+        options["interp"] = "1";
+    }
     virtual bool setup () {
         // The size argument will be the resulting display (full) window.
         const ImageSpec &Aspec (*ir[1]->spec(0,0));
@@ -3121,7 +3158,8 @@ public:
         return true;
     }
     virtual int impl (ImageBuf **img) {
-        return ImageBufAlgo::resample (*img[0], *img[1]);
+        bool interp = (bool) Strutil::from_string<int>(options["interp"]);
+        return ImageBufAlgo::resample (*img[0], *img[1], interp);
     }
 };
 
@@ -3789,6 +3827,19 @@ OP_CUSTOMCLASS (deepmerge, OpDeepMerge, 2);
 
 
 
+class OpDeepHoldout : public OiiotoolOp {
+public:
+    OpDeepHoldout (Oiiotool &ot, string_view opname, int argc, const char *argv[])
+        : OiiotoolOp (ot, opname, argc, argv, 2) {}
+    virtual int impl (ImageBuf **img) {
+        return ImageBufAlgo::deep_holdout (*img[0], *img[1], *img[2]);
+    }
+};
+
+OP_CUSTOMCLASS (deepholdout, OpDeepHoldout, 2);
+
+
+
 class OpDeepen : public OiiotoolOp {
 public:
     OpDeepen (Oiiotool &ot, string_view opname, int argc, const char *argv[])
@@ -4256,7 +4307,7 @@ input_file (int argc, const char *argv[])
             if (linearspace.empty())
                 linearspace = string_view("Linear");
             if (colorspace.size() && !Strutil::iequals(colorspace,linearspace)) {
-                const char *argv[] = { "colorconvert", colorspace.c_str(),
+                const char *argv[] = { "colorconvert:strict=0", colorspace.c_str(),
                                        linearspace.c_str() };
                 if (ot.debug)
                     std::cout << "  Converting " << filename << " from "
@@ -4515,7 +4566,8 @@ output_file (int argc, const char *argv[])
             if (ot.debug)
                 std::cout << "  Converting from " << currentspace << " to "
                           << outcolorspace << " for output to " << filename << "\n";
-            const char *argv[] = { "colorconvert", currentspace.c_str(), outcolorspace.c_str() };
+            const char *argv[] = { "colorconvert:strict=0",
+                                   currentspace.c_str(), outcolorspace.c_str() };
             action_colorconvert (3, argv);
             ir = ot.curimg;
         }
@@ -4705,12 +4757,12 @@ command_line_string (int argc, char * argv[], bool sansattrib)
     for (int i = 0;  i < argc;  ++i) {
         if (sansattrib) {
             // skip any filtered attributes
-            if (!strcmp(argv[i], "--attrib") || !strcmp(argv[i], "-attrib") ||
-                !strcmp(argv[i], "--sattrib") || !strcmp(argv[i], "-sattrib")) {
+            if (Strutil::starts_with(argv[i], "--attrib") || Strutil::starts_with(argv[i], "-attrib") ||
+                Strutil::starts_with(argv[i], "--sattrib") || Strutil::starts_with(argv[i], "-sattrib")) {
                 i += 2;  // also skip the following arguments
                 continue;
             }
-            if (!strcmp(argv[i], "--sansattrib") || !strcmp(argv[i], "-sansattrib")) {
+            if (Strutil::starts_with(argv[i], "--sansattrib") || Strutil::starts_with(argv[i], "-sansattrib")) {
                 continue;
             }
         }
@@ -4987,6 +5039,7 @@ getargs (int argc, char *argv[])
                 "--over %@", action_over, NULL, "'Over' composite of two images",
                 "--zover %@", action_zover, NULL, "Depth composite two images with Z channels (options: zeroisinf=%d)",
                 "--deepmerge %@", action_deepmerge, NULL, "Merge/composite two deep images",
+                "--deepholdout %@", action_deepholdout, NULL, "Hold out one deep image by another",
                 "--histogram %@ %s %d", action_histogram, NULL, NULL, "Histogram one channel (options: cumulative=0)",
                 "--rotate90 %@", action_rotate90, NULL, "Rotate the image 90 degrees clockwise",
                 "--rotate180 %@", action_rotate180, NULL, "Rotate the image 180 degrees",
@@ -4997,7 +5050,7 @@ getargs (int argc, char *argv[])
                 "--reorient %@", action_reorient, NULL, "Rotate and/or flop the image to transform the pixels to match the Orientation metadata",
                 "--transpose %@", action_transpose, NULL, "Transpose the image",
                 "--cshift %@ %s", action_cshift, NULL, "Circular shift the image (e.g.: +20-10)",
-                "--resample %@ %s", action_resample, NULL, "Resample (640x480, 50%)",
+                "--resample %@ %s", action_resample, NULL, "Resample (640x480, 50%) (options: interp=0)",
                 "--resize %@ %s", action_resize, NULL, "Resize (640x480, 50%) (options: filter=%s)",
                 "--fit %@ %s", action_fit, NULL, "Resize to fit within a window size (options: filter=%s, pad=%d, exact=%d)",
                 "--pixelaspect %@ %g", action_pixelaspect, NULL, "Scale up the image's width or height to match the given pixel aspect ratio (options: filter=%s)",

@@ -316,7 +316,7 @@ TGAOutput::write_tga20_data_fields ()
         unsigned char th = m_spec.get_int_attribute ("thumbnail_width", 0);
         int tc = m_spec.get_int_attribute ("thumbnail_nchannels", 0);
         if (tw && th && tc == m_spec.nchannels) {
-            ImageIOParameter *p = m_spec.find_attribute ("thumbnail_image");
+            ParamValue *p = m_spec.find_attribute ("thumbnail_image");
             if (p) {
                 ofs_thumb = (uint32_t) ftell (m_file);
                 // dump thumbnail size
@@ -400,7 +400,12 @@ TGAOutput::write_tga20_data_fields ()
         }
 
         // gamma -- two shorts, giving a ratio
-        if (Strutil::iequals (m_spec.get_string_attribute("oiio:ColorSpace"), "GammaCorrected")) {
+        std::string colorspace = m_spec.get_string_attribute("oiio:ColorSpace");
+        if (Strutil::istarts_with (colorspace, "GammaCorrected")) {
+            // Extract gamma value from color space, if it's there
+            float g = Strutil::from_string<float>(colorspace.c_str()+14);
+            if (g >= 0.01f && g <= 10.0f /* sanity check */)
+                m_gamma = g;
             // FIXME: invent a smarter way to convert to a vulgar fraction?
             // NOTE: the spec states that only 1 decimal place of precision
             // is needed, thus the expansion by 10

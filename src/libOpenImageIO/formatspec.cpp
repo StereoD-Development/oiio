@@ -310,7 +310,7 @@ void
 ImageSpec::attribute (string_view name, TypeDesc type, const void *value)
 {
     // Don't allow duplicates
-    ImageIOParameter *f = find_attribute (name);
+    ParamValue *f = find_attribute (name);
     if (! f) {
         extra_attribs.resize (extra_attribs.size() + 1);
         f = &extra_attribs.back();
@@ -320,64 +320,15 @@ ImageSpec::attribute (string_view name, TypeDesc type, const void *value)
 
 
 
-template <class T>
-static void
-parse_elements (string_view name, TypeDesc type, const char *type_code,
-                string_view value, ImageIOParameter &param)
-{
-    int num_items = type.numelements() * type.aggregate;
-    T *data = (T*) param.data();
-    // Erase any leading whitespace
-    value.remove_prefix (value.find_first_not_of (" \t"));
-    for (int i = 0;  i < num_items;  ++i) {
-        // Make a temporary copy so we for sure have a 0-terminated string.
-        std::string temp = value;
-        // Grab the first value from it
-        sscanf (temp.c_str(), type_code, &data[i]);
-        // Skip the value (eat until we find a delimiter -- space, comma, tab)
-        value.remove_prefix (value.find_first_of (" ,\t"));
-        // Skip the delimiter
-        value.remove_prefix (value.find_first_not_of (" ,\t"));
-        if (value.empty())
-            break;   // done if nothing left to parse
-    }
-}
-
-
-
 void
 ImageSpec::attribute (string_view name, TypeDesc type, string_view value)
 {
-    ImageIOParameter param (name, type, 1, NULL);
-    TypeDesc::BASETYPE basetype = (TypeDesc::BASETYPE)type.basetype;
-
-    if (basetype == TypeDesc::INT) {
-        parse_elements<int> (name, type, "%d", value, param);
-    } else if (basetype == TypeDesc::UINT) {
-        parse_elements<unsigned int> (name, type, "%u", value, param);
-    } else if (basetype == TypeDesc::FLOAT) {
-        parse_elements<float> (name, type, "%f", value, param);
-    } else if (basetype == TypeDesc::DOUBLE) {
-        parse_elements<double> (name, type, "%lf", value, param);
-    } else if (basetype == TypeDesc::INT64) {
-        parse_elements<long long> (name, type, "%lld", value, param);
-    } else if (basetype == TypeDesc::UINT64) {
-        parse_elements<unsigned long long> (name, type, "%llu", value, param);
-    } else if (basetype == TypeDesc::INT16) {
-        parse_elements<short> (name, type, "%hd", value, param);
-    } else if (basetype == TypeDesc::UINT16) {
-        parse_elements<unsigned short> (name, type, "%hu", value, param);
-    } else if (type == TypeDesc::STRING) {
-        ustring s (value);
-        param.init (name, TypeDesc::TypeString, 1, &s);
-    }
-
     // Don't allow duplicates
-    ImageIOParameter *f = find_attribute (name);
+    ParamValue *f = find_attribute (name);
     if (f) {
-        *f = param;
+        *f = ParamValue (name, type, value);
     } else {
-        extra_attribs.push_back (param);
+        extra_attribs.emplace_back (name, type, value);
     }
 }
 
@@ -411,12 +362,11 @@ ImageSpec::erase_attribute (string_view name, TypeDesc searchtype,
 }
 
 
-ImageIOParameter *
+ParamValue *
 ImageSpec::find_attribute (string_view name, TypeDesc searchtype,
                            bool casesensitive)
 {
-    ImageIOParameterList::iterator iter =
-        extra_attribs.find (name, searchtype, casesensitive);
+    auto iter = extra_attribs.find (name, searchtype, casesensitive);
     if (iter != extra_attribs.end())
         return &(*iter);
     return NULL;
@@ -424,12 +374,11 @@ ImageSpec::find_attribute (string_view name, TypeDesc searchtype,
 
 
 
-const ImageIOParameter *
+const ParamValue *
 ImageSpec::find_attribute (string_view name, TypeDesc searchtype,
                            bool casesensitive) const
 {
-    ImageIOParameterList::const_iterator iter =
-        extra_attribs.find (name, searchtype, casesensitive);
+    auto iter = extra_attribs.find (name, searchtype, casesensitive);
     if (iter != extra_attribs.end())
         return &(*iter);
     return NULL;
@@ -437,12 +386,11 @@ ImageSpec::find_attribute (string_view name, TypeDesc searchtype,
 
 
 
-const ImageIOParameter *
-ImageSpec::find_attribute (string_view name, ImageIOParameter &tmpparam,
+const ParamValue *
+ImageSpec::find_attribute (string_view name, ParamValue &tmpparam,
                            TypeDesc searchtype, bool casesensitive) const
 {
-    ImageIOParameterList::const_iterator iter =
-        extra_attribs.find (name, searchtype, casesensitive);
+    auto iter = extra_attribs.find (name, searchtype, casesensitive);
     if (iter != extra_attribs.end())
         return &(*iter);
     // Check named items in the ImageSpec structs, not in extra_attrubs
@@ -497,137 +445,51 @@ ImageSpec::find_attribute (string_view name, ImageIOParameter &tmpparam,
 
 
 int
-ImageSpec::get_int_attribute (string_view name, int val) const
+ImageSpec::get_int_attribute (string_view name, int defaultval) const
 {
-    ImageIOParameter tmpparam;
-    const ImageIOParameter *p = find_attribute (name, tmpparam);
-    if (p) {
-        if (p->type() == TypeDesc::INT)
-            val = *(const int *)p->data();
-        else if (p->type() == TypeDesc::UINT)
-            val = (int) *(const unsigned int *)p->data();
-        else if (p->type() == TypeDesc::INT16)
-            val = *(const short *)p->data();
-        else if (p->type() == TypeDesc::UINT16)
-            val = *(const unsigned short *)p->data();
-        else if (p->type() == TypeDesc::INT8)
-            val = *(const char *)p->data();
-        else if (p->type() == TypeDesc::UINT8)
-            val = *(const unsigned char *)p->data();
-        else if (p->type() == TypeDesc::INT64)
-            val = *(const long long *)p->data();
-        else if (p->type() == TypeDesc::UINT64)
-            val = *(const unsigned long long *)p->data();
-    }
-    return val;
+    // Call find_attribute with the tmpparam, in order to retrieve special
+    // "virtual" attribs that aren't really in extra_attribs.
+    ParamValue tmpparam;
+    auto p = find_attribute (name, tmpparam);
+    return p ? p->get_int (defaultval) : defaultval;
 }
 
 
 
 float
-ImageSpec::get_float_attribute (string_view name, float val) const
+ImageSpec::get_float_attribute (string_view name, float defaultval) const
 {
-    ImageIOParameter tmpparam;
-    const ImageIOParameter *p = find_attribute (name, tmpparam);
-    if (p) {
-        if (p->type() == TypeDesc::FLOAT)
-            val = *(const float *)p->data();
-        else if (p->type() == TypeDesc::HALF)
-            val = *(const half *)p->data();
-        else if (p->type() == TypeDesc::DOUBLE)
-            val = (float) *(const double *)p->data();
-        else if (p->type() == TypeDesc::INT)
-            val = (float) *(const int *)p->data();
-        else if (p->type() == TypeDesc::UINT)
-            val = (float) *(const unsigned int *)p->data();
-        else if (p->type() == TypeDesc::INT16)
-            val = (float) *(const short *)p->data();
-        else if (p->type() == TypeDesc::UINT16)
-            val = (float) *(const unsigned short *)p->data();
-        else if (p->type() == TypeDesc::INT8)
-            val = (float) *(const char *)p->data();
-        else if (p->type() == TypeDesc::UINT8)
-            val = (float) *(const unsigned char *)p->data();
-        else if (p->type() == TypeDesc::INT64)
-            val = (float) *(const long long *)p->data();
-        else if (p->type() == TypeDesc::UINT64)
-            val = (float) *(const unsigned long long *)p->data();
-    }
-    return val;
+    // No need for the special find_attribute trick, because there are
+    // currently no special virtual attribs that are floats.
+    return extra_attribs.get_float (name, defaultval,
+                                    false/*case*/, true/*convert*/);
 }
 
 
 
 string_view
-ImageSpec::get_string_attribute (string_view name, string_view val) const
+ImageSpec::get_string_attribute (string_view name, string_view defaultval) const
 {
-    ImageIOParameter tmpparam;
-    const ImageIOParameter *p = find_attribute (name, tmpparam, TypeDesc::STRING);
-    if (p)
-        return *(ustring *)p->data();
-    else return val;
+    ParamValue tmpparam;
+    const ParamValue *p = find_attribute (name, tmpparam, TypeDesc::STRING);
+    return p ? p->get_ustring() : defaultval;
+}
+
+
+
+int
+ImageSpec::channelindex (string_view name) const
+{
+    ASSERT (nchannels == int(channelnames.size()));
+    for (int i = 0; i < nchannels; ++i)
+        if (channelnames[i] == name)
+            return i;
+    return -1;
 }
 
 
 
 namespace {  // make an anon namespace
-
-template < typename T >
-void formatType(const ImageIOParameter& p, const int n, const TypeDesc& element, const char* formatString, std::string& out) {
-  const T *f = (const T *)p.data();
-  for (int i = 0;  i < n;  ++i) {
-      if (i)
-          out += ", ";
-      for (int c = 0;  c < (int)element.aggregate;  ++c, ++f)
-          out += Strutil::format (formatString, (c ? " " : ""), f[0]);
-  }
-}
-
-static std::string
-format_raw_metadata (const ImageIOParameter &p, int maxsize=16)
-{
-    std::string out;
-    TypeDesc element = p.type().elementtype();
-    int nfull = int(p.type().numelements()) * p.nvalues();
-    int n = std::min (nfull, maxsize);
-    if (element.basetype == TypeDesc::STRING) {
-        for (int i = 0;  i < n;  ++i) {
-            const char *s = ((const char **)p.data())[i];
-            out += Strutil::format ("%s\"%s\"", (i ? ", " : ""),
-                                    s ? Strutil::escape_chars(s) : std::string());
-        }
-    } else if (element.basetype == TypeDesc::FLOAT) {
-        formatType< float >(p, n, element, "%s%g", out);
-    } else if (element.basetype == TypeDesc::DOUBLE) {
-        formatType< double >(p, n, element, "%s%g", out);
-    } else if (element.basetype == TypeDesc::HALF) {
-        formatType< half >(p, n, element, "%s%g", out);
-    } else if (element.basetype == TypeDesc::INT) {
-        formatType< int >(p, n, element, "%s%d", out);
-    } else if (element.basetype == TypeDesc::UINT) {
-        formatType< unsigned int >(p, n, element, "%s%d", out);
-    } else if (element.basetype == TypeDesc::UINT16) {
-        formatType< unsigned short >(p, n, element, "%s%u", out);
-    } else if (element.basetype == TypeDesc::INT16) {
-        formatType< short >(p, n, element, "%s%d", out);
-    } else if (element.basetype == TypeDesc::UINT64) {
-        formatType< unsigned long long >(p, n, element, "%s%llu", out);
-    } else if (element.basetype == TypeDesc::INT64) {
-        formatType< long long >(p, n, element, "%s%lld", out);
-    } else if (element.basetype == TypeDesc::UINT8) {
-        formatType< unsigned char >(p, n, element, "%s%d", out);
-    } else if (element.basetype == TypeDesc::INT8) {
-        formatType< char >(p, n, element, "%s%d", out);
-    } else {
-        out += Strutil::format ("<unknown data type> (base %d, agg %d vec %d)",
-                p.type().basetype, p.type().aggregate,
-                p.type().vecsemantics);
-    }
-    if (n < nfull)
-        out += Strutil::format (", ... [%d x %s]", nfull,
-                                TypeDesc(TypeDesc::BASETYPE(element.basetype)));
-    return out;
-}
 
 struct LabelTable {
     int value;
@@ -635,13 +497,13 @@ struct LabelTable {
 };
 
 static std::string
-explain_justprint (const ImageIOParameter &p, const void *extradata)
+explain_justprint (const ParamValue &p, const void *extradata)
 {
-    return format_raw_metadata(p) + " " + std::string ((const char *)extradata);
+    return p.get_string() + " " + std::string ((const char *)extradata);
 }
 
 static std::string
-explain_labeltable (const ImageIOParameter &p, const void *extradata)
+explain_labeltable (const ParamValue &p, const void *extradata)
 {
     int val;
     if (p.type() == TypeDesc::INT)
@@ -659,7 +521,7 @@ explain_labeltable (const ImageIOParameter &p, const void *extradata)
 }
 
 static std::string
-explain_shutterapex (const ImageIOParameter &p, const void *extradata)
+explain_shutterapex (const ParamValue &p, const void *extradata)
 {
     if (p.type() == TypeDesc::FLOAT) {
         double val = pow (2.0, - (double)*(float *)p.data());
@@ -672,7 +534,7 @@ explain_shutterapex (const ImageIOParameter &p, const void *extradata)
 }
 
 static std::string
-explain_apertureapex (const ImageIOParameter &p, const void *extradata)
+explain_apertureapex (const ParamValue &p, const void *extradata)
 {
     if (p.type() == TypeDesc::FLOAT)
         return Strutil::format ("f/%g", powf (2.0f, *(float *)p.data()/2.0f));
@@ -680,7 +542,7 @@ explain_apertureapex (const ImageIOParameter &p, const void *extradata)
 }
 
 static std::string
-explain_ExifFlash (const ImageIOParameter &p, const void *extradata)
+explain_ExifFlash (const ParamValue &p, const void *extradata)
 {
     int val = 0;
     if (p.type() == TypeDesc::INT)
@@ -825,7 +687,7 @@ static LabelTable magnetic_table[] = {
     { 'T', "true north" }, { 'M', "magnetic north" }, { -1, NULL }
 };
 
-typedef std::string (*ExplainerFunc) (const ImageIOParameter &p, 
+typedef std::string (*ExplainerFunc) (const ParamValue &p, 
                                       const void *extradata);
 
 struct ExplanationTableEntry {
@@ -878,10 +740,14 @@ static ExplanationTableEntry explanation[] = {
 
 
 std::string
-ImageSpec::metadata_val (const ImageIOParameter &p, bool human)
+ImageSpec::metadata_val (const ParamValue &p, bool human)
 {
-    std::string out = format_raw_metadata (p, human ? 16 : 1024);
+    std::string out = p.get_string (human ? 16 : 1024);
 
+    // ParamValue::get_string() doesn't escape or double-quote single
+    // strings, so we need to correct for that here.
+    if (p.type() == TypeDesc::TypeString && p.nvalues() == 1)
+        out = Strutil::format ("\"%s\"", Strutil::escape_chars(out));
     if (human) {
         std::string nice;
         for (int e = 0;  explanation[e].oiioname;  ++e) {
@@ -890,6 +756,11 @@ ImageSpec::metadata_val (const ImageIOParameter &p, bool human)
                 nice = explanation[e].explainer (p, explanation[e].extradata);
                 break;
             }
+        }
+        if (p.type() == TypeDesc::TypeRational) {
+            int num = p.get<int>(0), den = p.get<int>(1);
+            if (den)
+                nice = Strutil::format ("%g", float(num)/float(den));
         }
         if (p.type() == TypeDesc::TypeTimeCode) {
             Imf::TimeCode tc = *reinterpret_cast<const Imf::TimeCode *>(p.data());

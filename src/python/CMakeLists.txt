@@ -42,7 +42,7 @@ else ()
     #Finding the python3 component for boost is a little tricky, since it has
     #different names on different systems. Try the most common ones
     #(boost_python3, boost_python-py34, …).
-    foreach (_boost_py3_lib python3 python-py34 python-py33 python-py32)
+    foreach (_boost_py3_lib python3 python-py${PYTHON_VERSION_MAJOR}${PYTHON_VERSION_MINOR})
         find_package (Boost 1.42 QUIET COMPONENTS ${_boost_py3_lib})
         string (TOUPPER ${_boost_py3_lib} boost_py3_lib_name)
         if (Boost_${boost_py3_lib_name}_FOUND)
@@ -77,12 +77,17 @@ if (BOOST_CUSTOM OR Boost_FOUND AND PYTHONLIBS_FOUND)
          py_typedesc.cpp py_paramvalue.cpp py_deepdata.cpp
          py_oiio.cpp)
 
+    string (REGEX MATCH "([0-9]+)\.([0-9]+)\.[0-9]+" _version_match ${PYTHONLIBS_VERSION_STRING})
+    set (PYTHONLIBS_VERSION_MAJOR ${CMAKE_MATCH_1})
+    set (PYTHONLIBS_VERSION_MINOR ${CMAKE_MATCH_2})
     if (VERBOSE)
         message (STATUS "Python found ${PYTHONLIBS_FOUND} ")
         message (STATUS "Python include dirs ${PYTHON_INCLUDE_PATH}")
         message (STATUS "Python libraries    ${PYTHON_LIBRARIES}")
         message (STATUS "Python to include 'lib' prefix: ${PYLIB_LIB_PREFIX}")
         message (STATUS "Python to include SO version: ${PYLIB_INCLUDE_SONAME}")
+        message (STATUS "PYTHONLIBS_VERSION_STRING = ${PYTHONLIBS_VERSION_STRING}")
+        message (STATUS "Python version major: ${PYTHONLIBS_VERSION_MAJOR} minor: ${PYTHONLIBS_VERSION_MINOR}")
     endif ()
 
     include_directories (${PYTHON_INCLUDE_PATH} ${Boost_INCLUDE_DIRS})

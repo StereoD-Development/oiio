@@ -299,11 +299,6 @@ TIFFOutput::open (const std::string &name, const ImageSpec &userspec,
         return false;
     }
 
-    // N.B. Clamp position at 0... TIFF is internally incapable of having
-    // negative origin.
-    TIFFSetField (m_tif, TIFFTAG_XPOSITION, (float)std::max (0, m_spec.x));
-    TIFFSetField (m_tif, TIFFTAG_YPOSITION, (float)std::max (0, m_spec.y));
-
     TIFFSetField (m_tif, TIFFTAG_IMAGEWIDTH, m_spec.width);
     TIFFSetField (m_tif, TIFFTAG_IMAGELENGTH, m_spec.height);
 
@@ -393,7 +388,7 @@ TIFFOutput::open (const std::string &name, const ImageSpec &userspec,
     TIFFSetField (m_tif, TIFFTAG_BITSPERSAMPLE, m_bitspersample);
     TIFFSetField (m_tif, TIFFTAG_SAMPLEFORMAT, sampformat);
 
-    m_photometric = (m_spec.nchannels > 1 ? PHOTOMETRIC_RGB : PHOTOMETRIC_MINISBLACK);
+    m_photometric = (m_spec.nchannels >= 3 ? PHOTOMETRIC_RGB : PHOTOMETRIC_MINISBLACK);
 
     string_view comp = m_spec.get_string_attribute("Compression", "zip");
     if (Strutil::iequals (comp, "jpeg") &&
@@ -482,12 +477,14 @@ TIFFOutput::open (const std::string &name, const ImageSpec &userspec,
     TIFFSetField (m_tif, TIFFTAG_PHOTOMETRIC, m_photometric);
 
     // ExtraSamples tag
-    if (m_spec.nchannels > 3 && m_photometric != PHOTOMETRIC_SEPARATED) {
+    if ((m_spec.alpha_channel >= 0 || m_spec.nchannels > 3)
+         && m_photometric != PHOTOMETRIC_SEPARATED) {
         bool unass = m_spec.get_int_attribute("oiio:UnassociatedAlpha", 0);
-        short e = m_spec.nchannels-3;
+        int defaultchans = m_spec.nchannels >= 3 ? 3 : 1;
+        short e = m_spec.nchannels - defaultchans;
         std::vector<unsigned short> extra (e);
         for (int c = 0;  c < e;  ++c) {
-            if (m_spec.alpha_channel == (c+3))
+            if (m_spec.alpha_channel == (c+defaultchans))
                 extra[c] = unass ? EXTRASAMPLE_UNASSALPHA : EXTRASAMPLE_ASSOCALPHA;
             else
                 extra[c] = EXTRASAMPLE_UNSPECIFIED;
@@ -495,7 +492,7 @@ TIFFOutput::open (const std::string &name, const ImageSpec &userspec,
         TIFFSetField (m_tif, TIFFTAG_EXTRASAMPLES, e, &extra[0]);
     }
 
-    ImageIOParameter *param;
+    ParamValue *param;
     const char *str = NULL;
 
     // Did the user request separate planar configuration?
@@ -533,7 +530,7 @@ TIFFOutput::open (const std::string &name, const ImageSpec &userspec,
     }
 
     // Write ICC profile, if we have anything
-    const ImageIOParameter* icc_profile_parameter = m_spec.find_attribute(ICC_PROFILE_ATTR);
+    const ParamValue* icc_profile_parameter = m_spec.find_attribute(ICC_PROFILE_ATTR);
     if (icc_profile_parameter != NULL) {
         unsigned char *icc_profile = (unsigned char*)icc_profile_parameter->data();
         uint32 length = icc_profile_parameter->type().size();
@@ -548,6 +545,11 @@ TIFFOutput::open (const std::string &name, const ImageSpec &userspec,
     // that contradicts them.
     float X_density = m_spec.get_float_attribute ("XResolution", 1.0f);
     float Y_density = m_spec.get_float_attribute ("YResolution", 1.0f);
+    // Eliminate nonsensical densities
+    if (X_density <= 0.0f)
+        X_density = 1.0f;
+    if (Y_density <= 0.0f)
+        Y_density = 1.0f;
     float aspect = m_spec.get_float_attribute ("PixelAspectRatio", 1.0f);
     if (X_density < 1.0f || Y_density < 1.0f || aspect*X_density != Y_density) {
         if (X_density < 1.0f || Y_density < 1.0f) {
@@ -556,6 +558,21 @@ TIFFOutput::open (const std::string &name, const ImageSpec &userspec,
         }
         m_spec.attribute ("XResolution", X_density);
         m_spec.attribute ("YResolution", X_density * aspect);
+    }
+
+    if (m_spec.x || m_spec.y) {
+        // The TIFF spec implies that the XPOSITION & YPOSITION are in the
+        // resolution units. For a long time we just assumed they were whole
+        // pixels. Beware! For the sake of old OIIO or other readers that
+        // assume pixel units, it may be smart to not have non-1.0
+        // XRESOLUTION or YRESOLUTION if you have a non-zero origin.
+        //
+        // TIFF is internally incapable of having negative origin, so we
+        // have to clamp at 0.
+        float x = m_spec.x / X_density;
+        float y = m_spec.y / Y_density;
+        TIFFSetField (m_tif, TIFFTAG_XPOSITION, std::max (0.0f, x));
+        TIFFSetField (m_tif, TIFFTAG_YPOSITION, std::max (0.0f, y));
     }
 
     // Deal with all other params
@@ -714,7 +731,7 @@ TIFFOutput::write_exif_data ()
     // First, see if we have any Exif data at all
     bool any_exif = false;
     for (size_t i = 0, e = m_spec.extra_attribs.size(); i < e; ++i) {
-        const ImageIOParameter &p (m_spec.extra_attribs[i]);
+        const ParamValue &p (m_spec.extra_attribs[i]);
         int tag, tifftype, count;
         if (exif_tag_lookup (p.name(), tag, tifftype, count) &&
                 tifftype != TIFF_NOTYPE) {
@@ -748,7 +765,7 @@ TIFFOutput::write_exif_data ()
     }
 
     for (size_t i = 0, e = m_spec.extra_attribs.size(); i < e; ++i) {
-        const ImageIOParameter &p (m_spec.extra_attribs[i]);
+        const ParamValue &p (m_spec.extra_attribs[i]);
         int tag, tifftype, count;
         if (exif_tag_lookup (p.name(), tag, tifftype, count) &&
                 tifftype != TIFF_NOTYPE) {

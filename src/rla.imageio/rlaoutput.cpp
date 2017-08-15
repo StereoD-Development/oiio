@@ -85,7 +85,7 @@ private:
     }
     
     /// Helper - sets a chromaticity from attribute
-    inline void set_chromaticity (const ImageIOParameter *p, char *dst,
+    inline void set_chromaticity (const ParamValue *p, char *dst,
                                   size_t field_size, const char *default_val);
     
     // Helper - handles the repetitive work of encoding and writing a
@@ -311,14 +311,17 @@ RLAOutput::open (const std::string &name, const ImageSpec &userspec,
     //           << m_rla.NumOfMatteChannels << " z " << m_rla.NumOfAuxChannels << "\n";
     m_rla.Revision = 0xFFFE;
     
-    std::string s = m_spec.get_string_attribute ("oiio:ColorSpace", "Unknown");
-    if (Strutil::iequals(s, "Linear"))
+    std::string colorspace = m_spec.get_string_attribute ("oiio:ColorSpace", "Unknown");
+    if (Strutil::iequals(colorspace, "Linear"))
         Strutil::safe_strcpy (m_rla.Gamma, "1.0", sizeof(m_rla.Gamma));
-    else if (Strutil::iequals(s, "GammaCorrected"))
-        snprintf (m_rla.Gamma, sizeof(m_rla.Gamma), "%.10f",
-            m_spec.get_float_attribute ("oiio:Gamma", 1.f));
-    
-    const ImageIOParameter *p;
+    else if (Strutil::istarts_with(colorspace, "GammaCorrected")) {
+        float g = Strutil::from_string<float>(colorspace.c_str()+14);
+        if (! (g >= 0.01f && g <= 10.0f /* sanity check */))
+            g = m_spec.get_float_attribute ("oiio:Gamma", 1.f);
+        snprintf (m_rla.Gamma, sizeof(m_rla.Gamma), "%.10f", g);
+    }
+
+    const ParamValue *p;
     // default NTSC chromaticities
     p = m_spec.find_attribute ("rla:RedChroma");
     set_chromaticity (p, m_rla.RedChroma, sizeof (m_rla.RedChroma), "0.67 0.08");
@@ -404,7 +407,7 @@ RLAOutput::open (const std::string &name, const ImageSpec &userspec,
 
 
 inline void
-RLAOutput::set_chromaticity (const ImageIOParameter *p, char *dst,
+RLAOutput::set_chromaticity (const ParamValue *p, char *dst,
                              size_t field_size, const char *default_val)
 {
     if (p && p->type().basetype == TypeDesc::FLOAT) {

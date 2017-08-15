@@ -409,9 +409,9 @@ public:
             for (int y = 0;  y < height;  ++y) {
                 char *d = (char *)data + y*ystride;
                 for (int x = 0;  x < width;  ++x, d += xstride) {
-                    simd::float4 r;
+                    simd::vfloat4 r;
                     r.load ((float *)d, 3);
-                    r = sRGB_to_linear (simd::float4((float *)d));
+                    r = sRGB_to_linear (simd::vfloat4((float *)d));
                     r.store ((float *)d, 3);
                 }
             }
@@ -443,9 +443,9 @@ public:
             for (int y = 0;  y < height;  ++y) {
                 char *d = (char *)data + y*ystride;
                 for (int x = 0;  x < width;  ++x, d += xstride) {
-                    simd::float4 r;
+                    simd::vfloat4 r;
                     r.load ((float *)d, 3);
-                    r = linear_to_sRGB (simd::float4((float *)d));
+                    r = linear_to_sRGB (simd::vfloat4((float *)d));
                     r.store ((float *)d, 3);
                 }
             }
@@ -505,6 +505,45 @@ public:
     }
 };
 
+
+
+// ColorProcessor that performs gamma correction
+class ColorProcessor_gamma : public ColorProcessor {
+public:
+    ColorProcessor_gamma (float gamma)
+        : ColorProcessor(), m_gamma(gamma)
+    { };
+    ~ColorProcessor_gamma () { };
+
+    virtual void apply (float *data, int width, int height, int channels,
+                        stride_t chanstride, stride_t xstride,
+                        stride_t ystride) const
+    {
+        if (channels > 3)
+            channels = 3;
+        if (channels == 3) {
+            simd::vfloat4 g = m_gamma;
+            for (int y = 0;  y < height;  ++y) {
+                char *d = (char *)data + y*ystride;
+                for (int x = 0;  x < width;  ++x, d += xstride) {
+                    simd::vfloat4 r;
+                    r.load ((float *)d, 3);
+                    r = fast_pow_pos (simd::vfloat4((float *)d), g);
+                    r.store ((float *)d, 3);
+                }
+            }
+        } else {
+            for (int y = 0;  y < height;  ++y) {
+                char *d = (char *)data + y*ystride;
+                for (int x = 0;  x < width;  ++x, d += xstride)
+                    for (int c = 0;  c < channels;  ++c)
+                        ((float *)d)[c] = powf (((float *)d)[c], m_gamma);
+            }
+        }
+    }
+private:
+    float m_gamma;
+};
 
 
 // ColorProcessor that does nothing (identity transform)
@@ -620,6 +659,22 @@ ColorConfig::createColorProcessor (string_view inputColorSpace,
         (iequals(outputColorSpace,"linear") || iequals(outputrole,"linear") ||
          iequals(outputColorSpace,"lnf") || iequals(outputColorSpace,"lnh"))) {
         return new ColorProcessor_Rec709_to_linear;
+    }
+    if ((iequals(inputColorSpace,"linear") || iequals(inputrole,"linear") ||
+         iequals(inputColorSpace,"lnf") || iequals(inputColorSpace,"lnh")) &&
+        istarts_with(outputColorSpace,"GammaCorrected")) {
+        string_view gamstr = outputColorSpace;
+        Strutil::parse_prefix (gamstr, "GammaCorrected");
+        float g = from_string<float>(gamstr);
+        return new ColorProcessor_gamma(1.0f/g);
+    }
+    if (istarts_with(inputColorSpace,"GammaCorrected") &&
+        (iequals(outputColorSpace,"linear") || iequals(outputrole,"linear") ||
+         iequals(outputColorSpace,"lnf") || iequals(outputColorSpace,"lnh"))) {
+        string_view gamstr = inputColorSpace;
+        Strutil::parse_prefix (gamstr, "GammaCorrected");
+        float g = from_string<float>(gamstr);
+        return new ColorProcessor_gamma(g);
     }
 
 #ifdef USE_OCIO
@@ -833,16 +888,6 @@ static spin_mutex colorconfig_mutex;
 bool
 ImageBufAlgo::colorconvert (ImageBuf &dst, const ImageBuf &src,
                             string_view from, string_view to,
-                            bool unpremult, ROI roi, int nthreads)
-{
-    return colorconvert (dst, src, from, to, unpremult, NULL, roi, nthreads);
-}
-
-
-
-bool
-ImageBufAlgo::colorconvert (ImageBuf &dst, const ImageBuf &src,
-                            string_view from, string_view to,
                             bool unpremult, ColorConfig *colorconfig,
                             ROI roi, int nthreads)
 {
@@ -1031,19 +1076,6 @@ ImageBufAlgo::ociolook (ImageBuf &dst, const ImageBuf &src,
                         string_view looks, string_view from, string_view to,
                         bool inverse, bool unpremult,
                         string_view key, string_view value,
-                        ROI roi, int nthreads)
-{
-    return ociolook (dst, src, looks, from, to, inverse, unpremult,
-                     key, value, NULL, roi, nthreads);
-}
-
-
-
-bool
-ImageBufAlgo::ociolook (ImageBuf &dst, const ImageBuf &src,
-                        string_view looks, string_view from, string_view to,
-                        bool inverse, bool unpremult,
-                        string_view key, string_view value,
                         ColorConfig *colorconfig,
                         ROI roi, int nthreads)
 {
@@ -1082,20 +1114,6 @@ ImageBufAlgo::ociolook (ImageBuf &dst, const ImageBuf &src,
         colorconfig->deleteColorProcessor (processor);
     }
     return ok;
-}
-
-
-    
-bool
-ImageBufAlgo::ociodisplay (ImageBuf &dst, const ImageBuf &src,
-                           string_view display, string_view view,
-                           string_view from, string_view looks,
-                           bool unpremult,
-                           string_view key, string_view value,
-                           ROI roi, int nthreads)
-{
-    return ociodisplay (dst, src, display, view, from, looks, unpremult,
-                        key, value, NULL, roi, nthreads);
 }
 
 

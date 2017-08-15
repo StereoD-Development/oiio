@@ -496,7 +496,7 @@ static void
 maketx_merge_spec (ImageSpec &dstspec, const ImageSpec &srcspec)
 {
     for (size_t i = 0, e = srcspec.extra_attribs.size(); i < e; ++i) {
-        const ImageIOParameter &p (srcspec.extra_attribs[i]);
+        const ParamValue &p (srcspec.extra_attribs[i]);
         ustring name = p.name();
         if (Strutil::istarts_with (name.string(), "maketx:")) {
             // Special instruction -- don't copy it to the destination spec
@@ -1214,6 +1214,7 @@ make_texture_impl (ImageBufAlgo::MakeTextureMode mode,
     // conversion is required we will promote the src to floating point
     // (or there wont be enough precision potentially).  Also,
     // independently color convert the constant color metadata
+    std::string colorconfigname = configspec.get_string_attribute ("maketx:colorconfig");
     std::string incolorspace = configspec.get_string_attribute ("maketx:incolorspace");
     std::string outcolorspace = configspec.get_string_attribute ("maketx:outcolorspace");
     if (!incolorspace.empty() && !outcolorspace.empty() && incolorspace != outcolorspace) {
@@ -1233,7 +1234,7 @@ make_texture_impl (ImageBufAlgo::MakeTextureMode mode,
             ccSrc.reset (new ImageBuf (floatSpec));
         }
 
-        ColorConfig colorconfig;
+        ColorConfig colorconfig (colorconfigname);
         if (colorconfig.error()) {
             outstream << "Error Creating ColorConfig\n";
             outstream << colorconfig.geterror() << std::endl;

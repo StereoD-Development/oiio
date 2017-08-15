@@ -972,16 +972,13 @@ bool OIIO_API colorconvert (ImageBuf &dst, const ImageBuf &src,
                             string_view context_value="",
                             ColorConfig *colorconfig=NULL,
                             ROI roi=ROI::All(), int nthreads=0);
-// DEPRECATED: [1.7]
+
+OIIO_DEPRECATED("Use the other version. [1.7]")
 bool OIIO_API colorconvert (ImageBuf &dst, const ImageBuf &src,
                             string_view from, string_view to,
-                            bool unpremult=false,
-                            ColorConfig *colorconfig=NULL,
+                            bool unpremult,
+                            ColorConfig *colorconfig,
                             ROI roi=ROI::All(), int nthreads=0);
-OIIO_DEPRECATED("Use the version that takes a ColorConfig*. [1.6]")
-bool OIIO_API colorconvert (ImageBuf &dst, const ImageBuf &src,
-                            string_view from, string_view to,
-                            bool unpremult, ROI roi, int nthreads=0);
 
 /// Copy pixels within the ROI from src to dst, applying a color transform.
 /// In-place operations (dst == src) are supported.
@@ -1032,12 +1029,6 @@ bool OIIO_API ociolook (ImageBuf &dst, const ImageBuf &src,
                         string_view key="", string_view value="",
                         ColorConfig *colorconfig=NULL,
                         ROI roi=ROI::All(), int nthreads=0);
-OIIO_DEPRECATED("Use the version that takes a ColorConfig*. [1.6]")
-bool OIIO_API ociolook (ImageBuf &dst, const ImageBuf &src,
-                        string_view looks, string_view from, string_view to,
-                        bool unpremult, bool inverse,
-                        string_view key, string_view value,
-                        ROI roi, int nthreads=0);
 
 /// Copy pixels within the ROI from src to dst, applying an OpenColorIO
 /// "display" transform.  If from or looks are NULL, it will not
@@ -1063,12 +1054,6 @@ bool OIIO_API ociodisplay (ImageBuf &dst, const ImageBuf &src,
                         string_view key="", string_view value="",
                         ColorConfig *colorconfig=NULL,
                         ROI roi=ROI::All(), int nthreads=0);
-OIIO_DEPRECATED("Use the version that takes a ColorConfig*. [1.6]")
-bool OIIO_API ociodisplay (ImageBuf &dst, const ImageBuf &src,
-                        string_view display, string_view view,
-                        string_view from, string_view looks,
-                        bool unpremult, string_view key, string_view value,
-                        ROI roi, int nthreads=0);
 
 /// Copy pixels within the ROI from src to dst, applying an OpenColorIO
 /// "file" transform.  If inverse is true, it will reverse the color
@@ -1893,6 +1878,17 @@ bool OIIO_API zover (ImageBuf &dst, const ImageBuf &A, const ImageBuf &B,
                      ROI roi = ROI::All(), int nthreads = 0);
 
 
+/// Set dst to the samples of deep image src that are closer than the opaque
+/// frontier of deep image holdout, returning true upon success and false
+/// for any failures. Samples of src that are farther than the first opaque
+/// sample of holdout (for the corresponding pixel)will not be copied to
+/// dst. Image holdout is only used as the depth threshold; no sample values
+/// from holdout are themselves copied to dst.
+bool OIIO_API deep_holdout (ImageBuf &dst, const ImageBuf &src,
+                            const ImageBuf &holdout,
+                            ROI roi = ROI::All(), int nthreads = 0);
+
+
 
 /// Render a single point at (x,y) of the given color "over" the existing
 /// image dst. If there is no alpha channel, the color will be written
@@ -2080,6 +2076,9 @@ enum OIIO_API MakeTextureMode {
 ///    maketx:outcolorspace (string) 
 ///                           These two together will apply a color conversion
 ///                               (with OpenColorIO, if compiled). Default: ""
+///    maketx:colorconfig (string)
+///                           Specifies a custom OpenColorIO color config
+///                           file. Default: ""
 ///    maketx:checknan (int)  If nonzero, will consider it an error if the
 ///                               input image has any NaN pixels. (0)
 ///    maketx:fixnan (string) If set to "black" or "box3", will attempt

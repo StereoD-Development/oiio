@@ -232,8 +232,8 @@ static object
 ImageSpec_get_attribute_typed (const ImageSpec& spec,
                                const std::string &name, TypeDesc type)
 {
-    ImageIOParameter tmpparam;
-    const ImageIOParameter *p = spec.find_attribute (name, tmpparam, type);
+    ParamValue tmpparam;
+    const ParamValue *p = spec.find_attribute (name, tmpparam, type);
     if (!p)
         return object();   // None
     type = p->type();
@@ -313,6 +313,12 @@ ImageSpec_get_string_attribute_d (const ImageSpec& spec, const char *name,
 
 
 
+static int
+ImageSpec_channelindex (const ImageSpec& spec, const std::string &name)
+{
+    return spec.channelindex (name);
+}
+
 
 
 void declare_imagespec()
@@ -343,7 +349,7 @@ void declare_imagespec()
         .def_readwrite("z_channel",     &ImageSpec::z_channel)
         .def_readwrite("deep",          &ImageSpec::deep)
         .add_property("extra_attribs", 
-            make_getter(&ImageSpec::extra_attribs))//ImageIOParameterList
+            make_getter(&ImageSpec::extra_attribs))//ParamValueList
         
         .def(init<int, int, int, TypeDesc>())
         .def(init<int, int, int, TypeDesc::BASETYPE>())
@@ -370,7 +376,8 @@ void declare_imagespec()
              ImageSpec_image_bytes_overloads(args("native")))
         .def("tile_pixels",             &ImageSpec::tile_pixels)
         .def("image_pixels",            &ImageSpec::image_pixels)
-        .def("size_t_safe",             &ImageSpec::size_t_safe) 
+        .def("size_t_safe",             &ImageSpec::size_t_safe)
+        .def("channelindex",            &ImageSpec_channelindex)
 
         // For now, do not expose auto_stride.  It's not obvious that
         // anybody will want to do pointer work and strides from Python.

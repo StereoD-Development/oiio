@@ -4,6 +4,7 @@ New minimum dependencies:
  * **C++11** (gcc 4.8.2, clang 3.3, or MSVS 2013)
  * **Boost >= 1.53**
  * **CMake >= 3.0**
+ * (optional) **Qt >= 5.6**
 
 Major new features and improvements:
 * New oiiotool features:
@@ -33,6 +34,8 @@ Major new features and improvements:
      than when nonzero controls the width of a "drop shadow" that makes the
      text clearer when rendered on a background image of similar color.
      #1646 (1.8.3)
+   * `--deepholdout` culls all samples that are farther away than the
+     opaque depth of a second holdout image. #1691 (1.8.4)
 * New ImageBufAlgo functionality:
    * `color_map()` applies a color map based on the input values; the
      map can be one of several named ones, or given explicitly with
@@ -40,14 +43,27 @@ Major new features and improvements:
    * Added implementation of ImageBufAlgo::to_IplImage(). #1461 (1.7.9/1.8.1)
    * `render_text()` has added parameters controlling text alignment and
      drop shadows. #1646 (1.8.3)
+   * `deep_holdout()` culls all samples that are farther away than the
+     opaque depth of a second holdout image. #1691 (1.8.4)
 * DICOM file format support (currently read-only). DICOM is the standard for
   medical imaging data. Will   only build if dependency "dcmtk" is found at
   build time. #1534 (1.8.1)
 
 Public API changes:
-* `ImageSpec::serialize()` returns a string with a serialized version of
-  the contents of the ImageSpec. It may be text (human readable, like
-  is printed by `oiiotool -info -v`) or XML. #1504 (1.8.0)
+* TypeDesc:
+   * Rational support: new 'semantic' hint RATIONAL and TypeDesc::Rational.
+     A rational is an int of aggregate VEC2 and hint RATIONAL, and should
+     be interpreted as val[0]/val[1]. #1698 (1.8.5)
+* ImageSpec:
+   * New `ImageSpec::serialize()` returns a string with a serialized version
+     of the contents of the ImageSpec. It may be text (human readable, like
+     is printed by `oiiotool -info -v`) or XML. #1504 (1.8.0)
+   * `ImageSpec` has a new constructor that accepts a `ROI` for image
+     dimensions and channels. #1646 (1.8.3)
+   * New `ImageSpec::channelspec()` retrieves the index of a named channel.
+     #1691 (1.8.4)
+   * New `ImageSpec::channelname(int)` safely retrieves the index of a named
+     channel. #1706 (1.8.5)
 * ColorConig::createLookTransform() and createDisplayTransform() have been
   extended to allow multiple key/value context pairs, by making them
   comma-separated lists. The createColorProcessor() method has also been
@@ -61,17 +77,40 @@ Public API changes:
   #1609 (1.8.2/1.7.11)
 * `ImageBuf::wrap_mode_from_string()` converts string wrap mode names
   (such as "black") into `ImageBuf::WrapMode` enum values. #1615 (1.8.3)
-* `OIIO::getattribute()` supports two new queries: `"input_format_list"` and
-  `"output_format_list"` which return comma-separated lists of all formats
-  that support input and output, respectively. #1577 (1.8.3)
+* New `OIIO::getattribute()` queries:
+   * `"input_format_list"` and `"output_format_list"` return comma-separated
+     lists of all formats that support input and output, respectively.
+     #1577 (1.8.3)
+   * `"oiio:simd"` returns a comma-separated list of SIMD capabilities that
+      were enabled at build time, and `"hw:simd"` returns the list of
+      capabilities available on the currently running hardware. #1719 (1.8.5)
 * `ImageBufAlgo::render_text()` API call has been overhauled, in addition
   to new alignment and shadow aprameters, the color has changed from a raw
   pointer to an `array_view<const float>` for better memory safety. Also,
   it is now valid for the destination image to be uninitialized, in which
   case it will be initialized to be just big enough for the text.
   #1646 (1.8.3)
-* `ImageSpec` has a new constructor that accepts a `ROI` for image
-  dimensions and channels. #1646 (1.8.3)
+* DeepData:
+   * New `DeepData::opaque_z()` returns the depth value at which a pixel
+     becomes fully opaque. #1691 (1.8.4)
+   * New `DeepData::initialized()` and `allocated()` return whether the
+     DD is initialized and allocated, respectively. #1691 (1.8.4)
+   * `DeepData::split()` has been changed to return a `bool` indicating
+     whether any split occurred. #1691 (1.8.4)
+* Remove some long-deprecated varieties of `ImageBufAlgo::colorconvert()`,
+  `ociolook()`, and `ociodisplay()`. #1695 (1.8.4)
+* TypeDesc now allows specification of "rational" values, using a vec2i
+  (aggregate 2-vector of int) with a semantic hint of RATIONAL, i.e.,
+  `TypeDesc(INT, VEC2, RATIONAL)`, which is also aliased as
+  `TypeDesc::TypeRational`. The value is understood to be val[0]/val[1].
+  #1698 (1.8.5)
+* ParamValueList::get_float will automatically convert rational values to
+  float. #1698 (1.8.5)
+* The standard metadata "FramesPerSecond" has had its definition changed
+  from `float` to `rational`. Retrieving it as `float` should still work
+  as always. But apps and plugins that wish to treat it as a true rational
+  with no loss of precision are able to do so. This is only known to
+  directly affect the OpenEXR, GIF, and FFMPEG metadata. #1698 (1.8.5)
 
 Fixes, minor enhancements, and performance improvements:
 * oiiotool:
@@ -135,6 +174,14 @@ Fixes, minor enhancements, and performance improvements:
      (1.8.4/1.7.14)
    * `--deepmerge` now will give a useful error message when the image do
      not have the same number of channels. #1675 (1.8.4/1.7.14)
+   * `--autocc` more gracefully handles unknown color spaces with a warning,
+     rather than a full error and termination. #1681 (1.8.4)
+   * `--resample` now takes an optional modifier `interp=0` to control
+     whether bilinear sample is used (default) or true closest-pixel point
+     sampling. #1694 (1.8.4)
+   * You can set rational metadata on the command line like this:
+      `oiiotool foo.exr --attrib:type=rational onehalf "50/100" -o rat.exr`
+      #1698 (1.8.5)
 * ImageBufAlgo:
    * `channel_append()` resolves redundant channel names by using the
      subimage name, if available. #1498 (1.8.0/1.7.8)
@@ -148,12 +195,15 @@ Fixes, minor enhancements, and performance improvements:
       #1668 (1.8.4/1.7.14)
    * `deep_merge()` now will give a useful error message when the images do
      not have the same number of channels. #1675 (1.8.4/1.7.14)
+   * `deep_merge()` performance has been greatly improved. #1739 (1.8.5)
+   * `resample()` fixed a subtle 1/2 pixel shift, now it more closely
+      aligns with `resize()`. #1694 (1.8.4)
 * ImageBuf:
    * Fix broken threads(n) method, which didn't correctly pass the right
      number of threads along. #1622. (1.8.3/1.7.12)
    * Copy constructor from another ImageBuf was previously broken for
      IB's that wrap application buffers. #1665 (1.8.4/1.7.13)
-* TextureSystem / ImageCache:
+* TextureSystem / ImageCache / maketx:
    * `IC::get_image_info` (or `TS::get_texture_info`) queries for "channels"
      on UDIM file patterns now succeed, returning the value for the first
      matching file it finds. (N.B.: Relies on all textures within the same
@@ -180,6 +230,13 @@ Fixes, minor enhancements, and performance improvements:
      hig an assertion) if asked for information about a subimage or MIP
      level that does not exist in the file. #1672 (1.8.4/1.7.14)
    * TextureSystem::get_texels fixes crashing behavior. #1669 (1.8.4/1.7.14)
+   * Big performance improvement on Windows with MSVC by removing certain
+     empty destructors in simd.h that was preventing MSVC from fully inlining
+     those classes. #1685 (1.8.4/1.7.15)
+   * maketx now supports `--colorconfig` option to explicitly point it to
+     an OpenColorIO config file, just like `oiiotool `--colorconfig`.
+     #1692 (1.8.4)
+   * Fix rare edge case crash in ImageCache. #1696 (1.8.4/1.7.15)
 * Bug fix to possible crashes when adding dither to tiled file output
   (buffer size miscalculation). #1518 (1.8.0/1.7.8)
 * Make sure that sRGB<->linear color transform still work (in the obvious
@@ -195,6 +252,12 @@ Fixes, minor enhancements, and performance improvements:
   #1595 (1.8.2/1.7.11)
 * BMP:
    * Add support for version 5 of the BMP format header. $1616 (1.8.3/1.7.12)
+* FFMpeg/movies:
+   * "FramesPerSecond" metadata has had its type changed to rational.
+     #1709 (1.8.5)
+* GIF:
+   * "FramesPerSecond" metadata has had its type changed to rational.
+     #1709 (1.8.5)
 * IFF:
    * Fix IFF output that didn't correctly save the "Author" and "Date"
      metadata. #1549 (1.8.1/1.7.8)
@@ -210,10 +273,16 @@ Fixes, minor enhancements, and performance improvements:
   * Allow compression "none" for deep exr files. (1.8.2/1.7.11)
   * Fixed input problem with sorting order of spectral alpha channels (RA,
     GA, BA, or AR, AG, AB). #1674 (1.8./1.7.14)
+  * Can handle true rational metadata, including FramesPerSecond and
+    captureRate. #1698 (1.8.5)
+  * Fix problem with 2-channel images putting the channels in the wrong
+    order. #1717 (1.8.5/1.7.16)
+* PNG: Better extraction of XMP from PNG files. #1689 (1.8.4)
 * PSD:
    * Support has been added for "cmyk", "multichannel", and "grayscale"
      color modes. And support was fixed for rgb and grayscale 32 bit per
      sample bit depth. #1641 (1.8.3/1.7.13)
+   * Fix issue for layer mask channels. #1714 (1.8.5)
 * RAW:
    * Fix possible crash when reading certain raw metadata. #1547 (1.7.8/1.8.0)
    * The default value for missing "raw:use_camera_matrix" has been changed
@@ -234,11 +303,19 @@ Fixes, minor enhancements, and performance improvements:
    * Fix to TIFF handling of certain unusual tags. #1547 (1.7.8/1.8.0)
    * Now has a way to read raw pixel values from CMYK files, without
      the automatic conversion to RGB (pass configuration attribute
-     "oiio:RawColor" set to nonzero). 1605 (1.8.2/1.7.11)
+     "oiio:RawColor" set to nonzero). #1605 (1.8.2/1.7.11)
+   * Improved I/O of color separation images, particularly those with
+     custom InkSet attributes. #1658 (1.8.4/1.7.15)
    * Fix typo that prevented correct reading of some Exif fields. #1625
      (1.8.3/1.7.12)
    * TIFF output omitted setting the "Make" and "Model" metadata tags.
      #1642 (1.8.3/1.7.13)
+   * Images with fewer than 4 channels, but one of those channels was alpha,
+     were not correctly marking spec.alpha_channel. #1718 (1.8.5/1.7.16)
+   * The XPOSITION and YPOSITION tags are now interpreted as relative to
+     the RESOLUTIONUNIT, whereas before it was assumed to be measured in
+     pixels. We are confident that the new way is more in line with the
+     intent of the TIFF spec. #1631 (1.8.5)
 * webp:
    * Several new sanity checks prevent the webp reader from spending too
      much I/O time and memory reading bogus files (malformed, corrupted,
@@ -252,6 +329,13 @@ Fixes, minor enhancements, and performance improvements:
 * In several places, the formatting of date metadata has been changed to
   have a leading zero rather than leading space for hours < 10, i.e.,
   "02:00:00" rather than " 2:00:00". #1630 (1.8.3)
+* Improve XMP parsing (for any format): for malformed XMP, still honor the
+  parts that could be parsed properly; recognize additinoal tags for
+  GPano (Google's Photo Sphere metadata schema) and camera raw (crs: prefix)
+  metadata; improve speed of XMP parsing.  #1679 (1.8.4)
+* Improved handling and color conversion of gamma-corrected images (DPX,
+  HDR, PNG, RLA, Targa) by supporting linearization correctly even in the
+  presence of OCIO configs that don't know about it. #1684 (1.8.4)
 
 Build/test system improvements:
 * Support for building against ffmpeg 3.1 (their API has changed).
@@ -278,6 +362,13 @@ Build/test system improvements:
   one-level namespace, and automatically embed the major and minor version
   in it. (Can stll override the basename.) #1662 (1.8.4)
 * Fixes to OSX rpath behavior of linked binaries. #1671
+* Upgraded the local PugiXML (when not using an external system version)
+  to release 1.8.1.  #1679 (1.8.4)
+* Beef up Strutil unit tests. (1.8.5)
+* `iv` has been upgraded to use Qt 5.x. Support for Qt 4.x is hereby
+  deprecated. #1711 (1.8.5)
+* Make the search for boost_python3 more reliable. #1727 (1.8.5)
+* Fix python site-packages path for installation. #1722 (1.8.5)
 
 Developer goodies / internals:
 * Sysutil::Term formatting now works properly in Windows (though is only
@@ -291,6 +382,17 @@ Developer goodies / internals:
    * Change deprecated C headers (such as `<ctype.h>`) to C++ (`<cctype>`).
      #1649 (1.8.4)
    * Use `std::vector<>::emplace_back()` where applicable. #1657 (1.8.4)
+* array_view.h:
+   * Add front() and back() methods. #1724 (1.8.5)
+* atomic.h:
+   * Added atomic_min and atomic_max. #1661 (1.8.4)
+   * Added atomic_fetch_add for `std::atomic<float>` and double. #1661 (1.8.4)
+   * Assume std::atomic is available, remove all code that is only needed
+     for pre-C++11. #1661 (1.8.4)
+* errorhandler.h: Change all ErrorHandler methods to use variadic templates
+  rather than varargs. #1653 (1.8.4)
+* filesystem.h:
+   * Better exception safety for Filesystem::searchpath_find. #1680 (1.8.4/1.7.15)
 * fmath.h:
    * Fixed typo in fmath.h that made bitcast_to_float incorrect. #1543 (1.8.0)
    * Templatize round_to_multiple() so it works with types other than `int`.
@@ -299,6 +401,22 @@ Developer goodies / internals:
      evenly-spaced knots. #1552 (1.8.1)
    * Slight reformulation of clamp() ensures sane results even with NaN
      parameters. #1617 (1.8.3)
+* paramlist.h:
+   * ParamValueList has been refactored and now inherets from, rather than
+     containts, a `std::vector<ParamValue>`. This removes most of the
+     additional code from the class. #1677 (1.8.4)
+   * ParamValue new methods: `get<>()`, `get_int()`, `get_float()`,
+     `get_string()`, `get_ustring()` retrieve and convert. #1686 (1.8.4)
+   * ParamValueList new methods: `get_int()`, `get_float()`, `get_string()`,
+     `get_ustring()` search, retrieve, and convert (much like the
+     equivalent versions in ImageSpec did). #1686 (1.8.4)
+   * Remove the pointless typedefs `ImageIOParameter` and
+     `ImageIOParameterList` in favor of `ParamValue` and `ParamValueList`,
+     respectively. #1690 (1.8.4)
+* platform.h:
+   * More `cpu_has_...()` tests for newer CPU capabilties. #1719 (1.8.5)
+   * Remove deprecated OIIO_NOTHROW macro, which should now simply be
+     C++11 `noexcept`. #1736 (1.8.5)
 * strutil.h / Strutil:
    * Add `Strutil::printf()` and `Strutil::fprintf()`, typesafe and
      non-thread-jumbled replacements for C versions. #1579, #1656 (1.8.1, 1.8.4)
@@ -306,6 +424,12 @@ Developer goodies / internals:
    * `Strutil::parse_identifier_if` #1647 (1.8.3)
 * simd.h:
    * Add a matrix44 constructor from 16 floats. #1552 (1.8.1)
+   * Renamed files floatN, intN, boolN to vfloatN, vintN, vboolN, to avoid
+     confusion with bit lengths of scalars. #1719 (1.8.5)
+   * Overhaul to support AVX-512 via vfloat16, vint16, vbool16 classes.
+     #1719 (1.8.5)
+   * load_mask, store_mask, and scatter/gather added for all types.
+     #1732 (1.8.5)
 * thread.h:
    * thread_pool class offers true persistent thread pool.
      #1556, #1581 (1.8.1)
@@ -313,6 +437,13 @@ Developer goodies / internals:
    * Environment variable `OPENIMAGEIO_THREADS` can artificially raise or
      lower the default number of threads (otherwise, it defaults to the
      number of processor cores available). #1581 (1.8.1)
+* timer.h: added timed_thread_widge() that benchmark code and prints
+  statistics about thread scaling. #1660 (1.8.4)
+* typedesc.h:
+   * Modernized TypeDesc with C++11 constexpr where applicable. #1684 (1.8.4)
+   * New `TypeDesc::basevalues()` method. #1688 (1.8.4)
+* unittest.h:
+   * Colored error messages and auto error return on completion. #1731 (1.8.5)
 * *NEW* parallel.h:
    * parallel_for, parallel_for_chunked, parallel_for_each offer simple
      thread_pool-based parallel looping in 1 and 2 dimensions.
@@ -326,18 +457,6 @@ Developer goodies / internals:
 * *NEW* function_view.h : function_view<> is a very lightweight, non-owning,
   generic callable object view. Cheaper than std::function, but the view
   is not allowed to outlive the callable object it references. #1660 (1.8.4)
-* timer.h: added timed_thread_widge() that benchmark code and prints
-  statistics about thread scaling. #1660 (1.8.4)
-* atomic.h:
-   * Added atomic_min and atomic_max. #1661 (1.8.4)
-   * Added atomic_fetch_add for `std::atomic<float>` and double. #1661 (1.8.4)
-   * Assume std::atomic is available, remove all code that is only needed
-     for pre-C++11. #1661 (1.8.4)
-* errorhandler.h: Change all ErrorHandler methods to use variadic templates
-  rather than varargs. #1653 (1.8.4)
-* ParamValueList has been refactored and now inherets from, rather than
-  containts, a `std::vector<ParamValue>`. This removes most of the additional
-  code from the class. #1677 (1.8.4)
 * Deprecate the pre-C++11 macros OIIO_CONSTEXPR, OIIO_CONSTEXPR_OR_CONST,
   and OIIO_NOEXCEPT. #1678 (1.8.4)
 
@@ -346,6 +465,25 @@ Docs:
 * Fix 'Building OIIO on Windows' link. #1590 (1.8.1)
 
 
+
+Release 1.7.16 (1 Aug 2017) -- compared to 1.7.15
+-------------------------------------------------
+* OpenEXR: fix problem with 2-channel images putting the channels in the
+  wrong order. #1717
+* TIFF: images with fewer than 4 channels, but one of those channels was
+  alpha, were not correctly marking their spec.alpha_channel. #1718
+* Several minor updates to simd.h backported from mater.
+
+Release 1.7.15 (1 Jun 2017) -- compared to 1.7.14
+-------------------------------------------------
+* Add "raw:user_sat" configuration attribute to the reader. #1666
+* Better exception safety for `Filesystem::searchpath_find()`. #1680
+* Improved I/O of color separation images, particularly those with custom
+  InkSet attributes. #1658
+* Big TextureSystem performance improvement on Windows with MSVC by removing
+  certain empty destructors in simd.h that prevented MSVC from fully
+  inlining the class. #1685
+* Fix rare case TextureSystem crash. #1685
 
 Release 1.7.14 (1 May 2017) -- compared to 1.7.13
 -------------------------------------------------
