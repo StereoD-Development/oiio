@@ -40,6 +40,7 @@
 #include <OpenImageIO/imageio.h>
 #include <OpenImageIO/strutil.h>
 #include <OpenImageIO/filesystem.h>
+#include <OpenImageIO/stream.h>
 #include <OpenImageIO/fmath.h>
 #include <OpenImageIO/sysutil.h>
 
@@ -304,8 +305,7 @@ inline void
 read_buffer_data(png_structp sp, png_bytep data, size_t length)
 {
     png_voidp iop = png_get_io_ptr(sp);
-    OIIO::istream isf(((OIIO::no_copy_membuf*)iop));
-    isf.read((char*)data, length);
+    ((OIIO::no_copy_membuf*)iop)->read((char*)data, length);
 }
 
 

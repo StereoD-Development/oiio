@@ -45,6 +45,7 @@
 #include <OpenImageIO/thread.h>
 #include <OpenImageIO/strutil.h>
 #include <OpenImageIO/filesystem.h>
+#include <OpenImageIO/stream.h>
 #include <OpenImageIO/fmath.h>
 
 #ifdef USE_BOOST_REGEX

@@ -89,6 +89,7 @@
 #include <OpenImageIO/strutil.h>
 #include <OpenImageIO/fmath.h>
 #include <OpenImageIO/filesystem.h>
+#include <OpenImageIO/stream.h>
 #include <OpenImageIO/imagebufalgo_util.h>
 #include <OpenImageIO/deepdata.h>
 #include <OpenImageIO/sysutil.h>
@@ -112,17 +113,18 @@ public:
         isbuffer = false;
     }
     OpenEXRInputStream (char *buffer, size_t size) : Imf::IStream("blank") {
+        stream = OIIO::no_copy_membuf(buffer, size);
         isbuffer = true;
-        buf = OIIO::no_copy_membuf(buffer, size);
-        stream = new OIIO::istream(&buf);
     }
     virtual bool read (char c[], int n) {
         if (isbuffer) { // Using in-mem file buffer
-            if (!stream)
+            if (!stream.valid() || stream.end_of_buffer())
+            {
                 throw Iex::InputExc("Unexpected end of file.");
+            }
 
             errno = 0;
-            stream->read (c, n);
+            stream.read (c, n);
         }
         else {
             if (!ifs) 
@@ -136,16 +138,16 @@ public:
     virtual Imath::Int64 tellg () {
         if (isbuffer)
         {
-            return std::streamoff(stream->tellg ());
+            return std::streamoff(stream.tellg ());
         }
         else
         {
-            return std::streamoff(ifs.tellg());
+            return std::streamoff(ifs.tellg ());
         }
     }
     virtual void seekg (Imath::Int64 pos) {
         if (isbuffer) {
-            stream->seekg (pos);
+            stream.seekg (pos);
         }
         else {
             ifs.seekg (pos);
@@ -155,7 +157,7 @@ public:
     virtual void clear () {
         if (isbuffer)
         {
-            stream->clear ();
+            stream.clear ();
         }
         else
             ifs.clear ();
@@ -163,18 +165,17 @@ public:
     bool isBufferTiled () {
         // Custom mirror of the IlmImf/ImfTestFile.cpp ::isOpenExrFile
         // so that we can test a memory blob for ::isTiled().
-        int _magic, version;
+        int /*_magic,*/ version;
 
         signed char b[4];
-        stream->read((char *)b, 4);
-        _magic = val_shift(b);
+        stream.seekg(4);
+        // stream.read((char *)b, 4);
+        // _magic = val_shift(b);
 
-        std::cerr << "BASE: " << Imf::MAGIC << "OUR MAGIC: " << _magic << std::endl;
-
-        stream->read((char *)b, 4);
+        read((char *)b, 4);
         version = val_shift(b);
 
-        seekg(0);
+        stream.seekg(0); // Must Seek
 
         return Imf::isTiled(version);
     }
@@ -182,13 +183,13 @@ public:
 private:
     int val_shift(signed char d[4])
     {
-        return (d[0] & 0x000000ff) |
-              ((d[1] << 8) & 0x0000ff00) |
+        return (d[0]        & 0x000000ff) |
+              ((d[1] << 8)  & 0x0000ff00) |
               ((d[2] << 16) & 0x00ff0000) |
-              (d[3] << 24);
+               (d[3] << 24);
     }
     bool check_error () {
-        if (!ifs && !stream) {
+        if (!ifs && !stream.valid()) {
             if (errno) 
                 Iex::throwErrnoExc ();
 
@@ -198,8 +199,7 @@ private:
     }
     OIIO::ifstream ifs;
     // For in-memory based files \/
-    OIIO::istream_ptr stream;
-    OIIO::no_copy_membuf buf;
+    OIIO::no_copy_membuf stream;
     bool isbuffer;
 };
 
@@ -1129,8 +1129,8 @@ OpenEXRInput::read_native_scanlines (int ybegin, int yend, int z,
                                      int chbegin, int chend, void *data)
 {
     chend = clamp (chend, chbegin+1, m_spec.nchannels);
-//    std::cerr << "openexr rns " << ybegin << ' ' << yend << ", channels "
-//              << chbegin << "-" << (chend-1) << "\n";
+   // std::cerr << "openexr rns " << ybegin << ' ' << yend << ", channels "
+             // << chbegin << "-" << (chend-1) << "\n";
     if (m_input_scanline == NULL && m_scanline_input_part == NULL) {
         error ("called OpenEXRInput::read_native_scanlines without an open file");
         return false;

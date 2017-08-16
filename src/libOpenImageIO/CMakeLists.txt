@@ -45,6 +45,7 @@ list (APPEND libOpenImageIO_srcs
                           ../libutil/argparse.cpp
                           ../libutil/errorhandler.cpp 
                           ../libutil/filesystem.cpp 
+                          ../libutil/stream.cpp 
                           ../libutil/farmhash.cpp 
                           ../libutil/filter.cpp 
                           ../libutil/hashes.cpp 
