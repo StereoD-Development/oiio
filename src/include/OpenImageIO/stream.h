@@ -42,11 +42,7 @@
 #include <iostream>
 #include <streambuf>
 
-#ifdef _WIN32
-// # include <windows.h>   // Already done by platform.h
-# include <shellapi.h>
-# include <direct.h>
-#else
+#ifndef _WIN32
 # include <unistd.h>
 #endif
 
