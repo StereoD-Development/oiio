@@ -74,7 +74,10 @@ public:
 
     virtual ~no_copy_membuf() { clear (); }
 
-    /// Normalized nomenclature for our streams.
+    /// -- Normalized nomenclature for our streams.
+
+    /// Write _size_ characters to _data_ based on the current placement of
+    /// our reading pointer.
     void read (char *data, std::streamsize size);
 
     /// Have we set up this buffer?

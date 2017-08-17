@@ -632,7 +632,7 @@ ImageInput::create (char *buffer, size_t size, bool do_open,
         return NULL;
     }
 
-    std::string format(/*format_name*/"exr");
+    std::string format(format_name);
 
     ImageInput::Creator create_function = NULL;
     { // scope the lock:
