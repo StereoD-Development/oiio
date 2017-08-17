@@ -82,6 +82,9 @@ public:
     /// Unset the pointer and size data
     void clear () { m_p = nullptr; m_current_pos = 0; m_size = 0; }
 
+    /// How large is the buffer?
+    std::ptrdiff_t size() { return m_size; }
+
     /// The current position on our pointer relative to the beginning of our
     /// data pointer.
     std::streampos tellg ();

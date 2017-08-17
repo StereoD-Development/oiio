@@ -38,6 +38,7 @@ extern "C" { // ffmpeg is a C api
 #endif
 }
 
+#define DEFAULT_FFMPEGINPUT_BUFSIZE 4096
 
 #if LIBAVCODEC_VERSION_INT < AV_VERSION_INT(55,28,1)
 #  define av_frame_alloc  avcodec_alloc_frame
@@ -127,9 +128,27 @@ inline int receive_frame(AVCodecContext *avctx, AVFrame *picture,
 #include <boost/thread/once.hpp>
 
 #include <OpenImageIO/imageio.h>
+#include <OpenImageIO/stream.h>
 #include <iostream>
 
 OIIO_PLUGIN_NAMESPACE_BEGIN
+
+// FFmpeg stream reading requires this for buffer logic
+static int read_packet(void *opaque, uint8_t *buf, int buf_size)
+{
+    auto stream = ((OIIO::no_copy_membuf*)opaque);
+
+    std::ptrdiff_t s = stream->size();
+    if (s > (std::numeric_limits<int>::max()))
+    {
+        // If we're too big, use the buf_size
+        s = buf_size;
+    }
+
+    buf_size = std::min(buf_size, (int)s); // If that's all they supply then so be it.
+    stream->read((char *)buf, buf_size);
+    return buf_size;
+}
 
 
 class FFmpegInput final : public ImageInput {
@@ -138,6 +157,7 @@ public:
     virtual ~FFmpegInput();
     virtual const char *format_name (void) const { return "FFmpeg movie"; }
     virtual bool open (const std::string &name, ImageSpec &spec);
+    virtual bool open (char *buffer, size_t size, ImageSpec &newspec);
     virtual bool close (void);
     virtual int current_subimage (void) const { return m_subimage; }
     virtual bool seek_subimage (int subimage, int miplevel, ImageSpec &newspec);
@@ -174,6 +194,13 @@ private:
     bool m_read_frame;
     int64_t m_start_time;
 
+    // In memory opening.
+    OIIO::no_copy_membuf m_stream;
+    uint8_t *m_context_buffer;
+
+    // Private open for both file-based and in-memory
+    bool open(const char *file_name, ImageSpec &spec);
+
     // init to initialize state
     void init (void) {
         m_filename.clear ();
@@ -195,6 +222,8 @@ private:
         m_codec_cap_delay = false;
         m_subimage = 0;
         m_start_time = 0;
+        m_stream.clear();
+        m_context_buffer = 0;
     }
 };
 
@@ -269,6 +298,14 @@ FFmpegInput::open (const std::string &name, ImageSpec &spec)
         error ("\"%s\" could not open input", file_name);
         return false;
     }
+
+    return open (file_name, spec);
+}
+
+
+bool
+FFmpegInput::open (const char *file_name, ImageSpec &spec)
+{
     if (avformat_find_stream_info (m_format_context, NULL) < 0)
     {
         error ("\"%s\" could not find stream info", file_name);
@@ -443,6 +480,66 @@ FFmpegInput::open (const std::string &name, ImageSpec &spec)
 
 
 bool
+FFmpegInput::open (char *buffer, size_t size, ImageSpec &newspec)
+{
+    // For the time being, we'll just assume this buffer should be
+    // open with FFMpeg. Applications should use the format_name
+    // in order to avoid any confusion in plugin useage.
+
+    m_stream = OIIO::no_copy_membuf (buffer, size);
+    // Give the avio_alloc_context buffer some space
+    m_context_buffer = (uint8_t*)av_malloc (DEFAULT_FFMPEGINPUT_BUFSIZE);
+    if (!m_context_buffer)
+    {
+        error ("FFmpegInput::open(*buffer...): couldn't allocate context buffer.");
+        close ();
+        return false;
+    }
+
+    // In order to use a buffer, ffpmeg must aquire the format and
+    // other information about the item passed in.
+    m_format_context = avformat_alloc_context ();
+    m_format_context->pb = avio_alloc_context (
+        (unsigned char*)m_context_buffer, DEFAULT_FFMPEGINPUT_BUFSIZE,
+        0, &m_stream, read_packet, NULL, NULL
+    );
+    if (!m_format_context->pb)
+    {
+        error("FFmpegInput::open(*buffer...): couldn't create avio context.");
+        close ();
+        return false;
+    }
+
+    // Probe for the input format.
+    AVProbeData probe_data;
+    probe_data.buf_size = (size < DEFAULT_FFMPEGINPUT_BUFSIZE) ? size : DEFAULT_FFMPEGINPUT_BUFSIZE;
+    probe_data.filename = "stream";
+    probe_data.buf = (unsigned char *)malloc (probe_data.buf_size);
+    memcpy(probe_data.buf, buffer, DEFAULT_FFMPEGINPUT_BUFSIZE);
+
+    AVInputFormat *input_format = av_probe_input_format(&probe_data, 1);
+    if (!input_format)
+        input_format = av_probe_input_format(&probe_data, 0);
+
+    free(probe_data.buf);
+    probe_data.buf = nullptr;
+
+    input_format->flags |= AVFMT_NOFILE;
+    int err = avformat_open_input(&m_format_context, "stream", input_format, NULL);
+    if (err != 0)
+    {
+        error ("FFmpegInput::open(*buffer...): Error code: %s", err);
+        close ();
+        return false;
+    }
+
+    return open ("stream", newspec);
+}
+
+
+
+
+bool
 FFmpegInput::seek_subimage (int subimage, int miplevel, ImageSpec &newspec)
 {
     if (subimage < 0 || subimage >= m_nsubimages || miplevel > 0) {
@@ -478,7 +575,14 @@ FFmpegInput::close (void)
     if (m_codec_context)
         avcodec_close (m_codec_context);
     if (m_format_context)
+    {
+        if (m_format_context->pb)
+        {
+            av_freep (&m_format_context->pb->buffer);
+            av_freep (&m_format_context->pb);
+        }
         avformat_close_input (&m_format_context);
+    }
     av_free (m_format_context); // will free m_codec and m_codec_context
     av_frame_free (&m_frame); // free after close input
     av_frame_free (&m_rgb_frame);
