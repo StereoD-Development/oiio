@@ -47,6 +47,11 @@ extern "C" { // ffmpeg is a C api
 #endif
 }
 
+#ifdef __GNUC__
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
+
 #define OIIO_FFMPEG_BUF_SIZE 32768
 
 #if LIBAVCODEC_VERSION_INT < AV_VERSION_INT(55,28,1)
@@ -110,22 +115,27 @@ inline int receive_frame(AVCodecContext *avctx, AVFrame *picture,
                          AVPacket *avpkt, int *got_frame)
 {
     int ret;
+    // Currently, as of Aug 2017, the send/receive offers poor
+    // performence when we are looking for realtime playback of
+    // imagery. For now, we'll stick with the outmoded, but effective
+    // avcodec_decode_video2
+    avcodec_decode_video2(avctx, picture, &ret, avpkt);
 
-    *got_frame = 0;
+    // -- The code for send/receive synchronously
+    // *got_frame = 0;
+    // if (avpkt) {
+    //     ret = avcodec_send_packet(avctx, avpkt);
+    //     if (ret < 0)
+    //         return (ret == AVERROR_EOF) ? 0 : ret;
+    // }
 
-    if (avpkt) {
-        ret = avcodec_send_packet(avctx, avpkt);
-        if (ret < 0)
-            return (ret == AVERROR_EOF) ? 0 : ret;
-    }
+    // ret = avcodec_receive_frame(avctx, picture);
+    // if (ret < 0 && ret != AVERROR(EAGAIN) && ret != AVERROR_EOF)
+    //     return ret;
+    // if (ret >= 0)
+    //     *got_frame = 1;
 
-    ret = avcodec_receive_frame(avctx, picture);
-    if (ret < 0 && ret != AVERROR(EAGAIN) && ret != AVERROR_EOF)
-        return ret;
-    if (ret >= 0)
-        *got_frame = 1;
-
-    return 0;
+    return ret;
 }
 #else
 #  define stream_codec(ix) m_format_context->streams[(ix)]->codec
@@ -133,8 +143,8 @@ inline int receive_frame(AVCodecContext *avctx, AVFrame *picture,
                          AVPacket *avpkt, int *got_frame)
 {
     int ret;
-    avcodec_decode_video2(avctx, picture, &ret, avpkt);
     *got_frame = (ret >= 0) ? 1 : 0;
+    avcodec_decode_video2(avctx, picture, &ret, avpkt);
     return ret;
 }
 #endif
@@ -149,5 +159,10 @@ inline int receive_frame(AVCodecContext *avctx, AVFrame *picture,
 #include <OpenImageIO/imageio.h>
 #include <OpenImageIO/stream.h>
 #include <iostream>
+
+
+#ifdef __GNUC__
+#pragma GCC diagnostic pop
+#endif
 
 #endif // FFMPEGOIIOBASE_H
