@@ -96,7 +96,7 @@ declare_imageio_format (const std::string &format_name,
     std::vector<std::string> all_extensions;
     // Look for input creator and list of supported extensions
     if (input_creator) {
-        if (input_formats.find(format_name) != input_formats.end())
+        if (input_formats.find(format_name) == input_formats.end())
             input_formats[format_name] = input_creator;
         std::string extsym = format_name + "_input_extensions";
         for (const char **e = input_extensions; e && *e; ++e) {
@@ -111,7 +111,7 @@ declare_imageio_format (const std::string &format_name,
 
     // Look for output creator and list of supported extensions
     if (output_creator) {
-        if (output_formats.find(format_name) != output_formats.end())
+        if (output_formats.find(format_name) == output_formats.end())
             output_formats[format_name] = output_creator;
         for (const char **e = output_extensions; e && *e; ++e) {
             std::string ext (*e);

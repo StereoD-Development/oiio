@@ -3,13 +3,20 @@
 # FIXME -- at some point, come back and figure out how to fix for real
 # before the field disappears entirely.
 if (NOT MSVC)
-    set_source_files_properties (ffmpeginput.cpp
-                             PROPERTIES COMPILE_FLAGS "-Wno-deprecated-declarations")
+    set_source_files_properties (
+        ffmpeginput.cpp
+        libffmpeg/ffmpegcontroller.cpp
+        libffmpeg/ffmpegoiiobase.h
+        libffmpeg/ffmpegcontroller.h
+        PROPERTIES COMPILE_FLAGS "-Wno-deprecated-declarations")
+    set_source_files_properties (
+        libffmpeg/ffmpegoiiobase.h
+        PROPERTIES COMPILE_FLAGS "-Wno-unused-function")
 endif()
 
 if (USE_FFMPEG AND FFMPEG_FOUND)
-    add_oiio_plugin (ffmpeginput.cpp
-                     INCLUDE_DIRS ${FFMPEG_INCLUDE_DIR}
+    add_oiio_plugin (ffmpeginput.cpp libffmpeg/ffmpegcontroller.cpp
+                     INCLUDE_DIRS ${FFMPEG_INCLUDE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}
                      LINK_LIBRARIES ${FFMPEG_LIBRARIES} ${BZIP2_LIBRARIES}
                      DEFINITIONS "-DUSE_FFMPEG")
 else()
