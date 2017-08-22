@@ -297,15 +297,10 @@ FFmpegController::open (const char *file_name, ImageSpec &spec, ImageInput *inp)
     spec.attribute ("FramesPerSecond", TypeDesc::TypeRational, &rat);
     spec.attribute ("oiio:Movie", true);
     spec.attribute ("oiio:BitsPerSample", m_codec_context->bits_per_raw_sample);
+    spec.attribute ("oiio:NumberOfFrames", (int)m_frames);
 
     m_width = stream_codec(m_index)->width;
     m_height = stream_codec(m_index)->height;
-
-    std::cerr << "FFmpegController::open" << std::endl;
-    std::cerr << "    - Frames: " << m_frames << std::endl;
-    std::cerr << "    - Width : " << m_width << std::endl;
-    std::cerr << "    - Height: " << m_height << std::endl;
-
     return m_frames;
 }
 
@@ -487,7 +482,7 @@ FFmpegController::read_frame (int frame)
     // We may retry reading data because video tends to be unstable
     // when attempting to retrieve pixels. It's an odd problem but a known
     // one to the video world
-    int retry = 1;
+    int retry = 100000;
     bool await = false;
     int last_seeked = -1;
 
@@ -572,8 +567,6 @@ FFmpegController::read_frame (int frame)
                     m_error_code = receive_frame (m_codec_context, m_avframe, &m_avPacket, &frame_decoded);
                     if (m_error_code < 0)
                     {
-                        char b[80];
-                        std::cerr << "!![ERROR]: " << av_make_error_string(b, 80, m_error_code) << std::endl;
                         m_error_string = "FFmpegInput: Couldn't receive frame";
                         break;
                     }
