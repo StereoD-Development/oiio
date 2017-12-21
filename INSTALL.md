@@ -23,14 +23,26 @@ Dependencies
 
 NEW or CHANGED dependencies since the last major release are **bold**.
 
-### Required dependencies
+### Required dependencies -- OIIO will not build at all without these
 
- * **C++11** (gcc 4.8.2, clang 3.3, or MSVS 2013)
- * **Boost >= 1.53**
- * **CMake >= 3.0**
+ * C++11 (should also build with C++14 and C++17)
+ * Compilers: gcc 4.8.2 - gcc 7, clang 3.3 - 5.0, MSVS 2013 - 2017, icc version 13 or higher
+ * Boost >= 1.53 (tested up through 1.65)
+ * CMake >= 3.2.2 (tested up through 3.9)
+ * OpenEXR >= 2.0 (recommended: 2.2)
+ * libTIFF >= 3.9 (recommended: 4.0+)
 
-### Optional dependencies
- * **Qt >= 5.6**  (Only needed if you want the `iv` viewer.)
+### Optional dependencies -- features may be disabled if not found
+ * If you are building the `iv` viewer (which will be disabled if any of
+   these are not found):
+     * Qt >= 5.6
+     * OpenGL
+     * GLEW
+ * If you are building the Python bindings:
+     * Python >= 2.7
+     * **NumPy**
+     * **pybind11** (but OIIO will auto-download it if not found)
+ * libRaw >= 0.17 ("RAW" image reading will be disabled if not found)
 
 
 
@@ -88,8 +100,8 @@ Make targets you should know about:
 
 Additionally, a few helpful modifiers alter some build-time options:
 
-|  Target             |  Command                                           |
-| :------------------ | -------------------------------------------------- |
+|  Target                   |  Command                                           |
+| :------------------------ | -------------------------------------------------- |
 | make VERBOSE=1 ...        |  Show all compilation commands
 | make STOP_ON_WARNING=0    |  Do not stop building if compiler warns
 | make EMBEDPLUGINS=0 ...   |  Don't compile the plugins into libOpenImageIO
@@ -101,7 +113,7 @@ Additionally, a few helpful modifiers alter some build-time options:
 | make BUILDSTATIC=1 ...    |  Build static library instead of shared
 | make LINKSTATIC=1 ...     |  Link with static external libraries when possible
 | make SOVERSION=nn ...     |  Include the specifed major version number in the shared object metadata
-|  make NAMESPACE=name      |   Wrap everything in another namespace
+| make NAMESPACE=name       |   Wrap everything in another namespace
 
 The command 'make help' will list all possible options.
 

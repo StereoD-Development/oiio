@@ -33,12 +33,15 @@ if (NOT VERBOSE)
     set (ZLIB_FIND_QUIETLY true)
 endif ()
 
+include (ExternalProject)
+
+option (BUILD_MISSING_DEPS "Try to download and build any missing dependencies" OFF)
 
 
 ###########################################################################
 # TIFF
 if (NOT TIFF_LIBRARIES OR NOT TIFF_INCLUDE_DIR)
-    find_package (TIFF REQUIRED)
+    find_package (TIFF 3.9 REQUIRED)
     include_directories (${TIFF_INCLUDE_DIR})
     message (STATUS "TIFFLIBS ${TIFF_LIBRARIES}")
 else ()
@@ -61,17 +64,14 @@ find_package (PNG REQUIRED)
 ###########################################################################
 # IlmBase & OpenEXR setup
 
-find_package (OpenEXR REQUIRED)
+find_package (OpenEXR 2.0 REQUIRED)
 #OpenEXR 2.2 still has problems with importing ImathInt64.h unqualified
 #thus need for ilmbase/OpenEXR
 include_directories ("${OPENEXR_INCLUDE_DIR}"
                      "${ILMBASE_INCLUDE_DIR}"
                      "${ILMBASE_INCLUDE_DIR}/OpenEXR")
 if (${OPENEXR_VERSION} VERSION_LESS 2.0.0)
-    # OpenEXR 1.x had weird #include dirctives, this is also necessary:
-    include_directories ("${OPENEXR_INCLUDE_DIR}/OpenEXR")
-else ()
-    add_definitions (-DUSE_OPENEXR_VERSION2=1)
+    message (FATAL_ERROR "OpenEXR/Ilmbase is too old")
 endif ()
 if (NOT OpenEXR_FIND_QUIETLY)
     message (STATUS "OPENEXR_INCLUDE_DIR = ${OPENEXR_INCLUDE_DIR}")
@@ -91,7 +91,7 @@ if (NOT Boost_FIND_QUIETLY)
 endif ()
 
 if (NOT DEFINED Boost_ADDITIONAL_VERSIONS)
-  set (Boost_ADDITIONAL_VERSIONS "1.63" "1.62" "1.61" "1.60"
+  set (Boost_ADDITIONAL_VERSIONS "1.64" "1.63" "1.62" "1.61" "1.60"
                                  "1.59" "1.58" "1.57" "1.56" "1.55"
                                  "1.54" "1.53")
 endif ()
@@ -110,48 +110,6 @@ else ()
     endif ()
     find_package (Boost 1.53 REQUIRED
                   COMPONENTS ${Boost_COMPONENTS})
-
-    # Try to figure out if this boost distro has Boost::python.  If we
-    # include python in the component list above, cmake will abort if
-    # it's not found.  So we resort to checking for the boost_python
-    # library's existance to get a soft failure.
-    find_library (my_boost_python_lib boost_python
-                  PATHS ${Boost_LIBRARY_DIRS} NO_DEFAULT_PATH)
-    mark_as_advanced (my_boost_python_lib)
-    if (NOT my_boost_python_lib AND Boost_SYSTEM_LIBRARY_RELEASE)
-        get_filename_component (my_boost_PYTHON_rel
-                                ${Boost_SYSTEM_LIBRARY_RELEASE} NAME
-                               )
-        string (REGEX REPLACE "^(lib)?(.+)_system(.+)$" "\\2_python\\3"
-                my_boost_PYTHON_rel ${my_boost_PYTHON_rel}
-               )
-        find_library (my_boost_PYTHON_LIBRARY_RELEASE
-                      NAMES ${my_boost_PYTHON_rel} lib${my_boost_PYTHON_rel}
-                      HINTS ${Boost_LIBRARY_DIRS}
-                      NO_DEFAULT_PATH
-                     )
-        mark_as_advanced (my_boost_PYTHON_LIBRARY_RELEASE)
-    endif ()
-    if (NOT my_boost_python_lib AND Boost_SYSTEM_LIBRARY_DEBUG)
-        get_filename_component (my_boost_PYTHON_dbg
-                                ${Boost_SYSTEM_LIBRARY_DEBUG} NAME
-                               )
-        string (REGEX REPLACE "^(lib)?(.+)_system(.+)$" "\\2_python\\3"
-                my_boost_PYTHON_dbg ${my_boost_PYTHON_dbg}
-               )
-        find_library (my_boost_PYTHON_LIBRARY_DEBUG
-                      NAMES ${my_boost_PYTHON_dbg} lib${my_boost_PYTHON_dbg}
-                      HINTS ${Boost_LIBRARY_DIRS}
-                      NO_DEFAULT_PATH
-                     )
-        mark_as_advanced (my_boost_PYTHON_LIBRARY_DEBUG)
-    endif ()
-    if (my_boost_python_lib OR
-        my_boost_PYTHON_LIBRARY_RELEASE OR my_boost_PYTHON_LIBRARY_DEBUG)
-        set (boost_PYTHON_FOUND ON)
-    else ()
-        set (boost_PYTHON_FOUND OFF)
-    endif ()
 endif ()
 
 # On Linux, Boost 1.55 and higher seems to need to link against -lrt
@@ -166,16 +124,6 @@ if (NOT Boost_FIND_QUIETLY)
     message (STATUS "Boost include dirs ${Boost_INCLUDE_DIRS}")
     message (STATUS "Boost library dirs ${Boost_LIBRARY_DIRS}")
     message (STATUS "Boost libraries    ${Boost_LIBRARIES}")
-    message (STATUS "Boost python found ${boost_PYTHON_FOUND}")
-endif ()
-if (NOT boost_PYTHON_FOUND)
-    # If Boost python components were not found, turn off all python support.
-    message (STATUS "Boost python support not found -- will not build python components!")
-    if (APPLE AND USE_PYTHON)
-        message (STATUS "   If your Boost is from Macports, you need the +python26 variant to get Python support.")
-    endif ()
-    set (USE_PYTHON OFF)
-    set (PYTHONLIBS_FOUND OFF)
 endif ()
 
 include_directories (SYSTEM "${Boost_INCLUDE_DIRS}")
@@ -534,29 +482,6 @@ endif ()
 
 
 ###########################################################################
-# OpenSSL Setup
-
-if (USE_OPENSSL)
-    find_package (OpenSSL)
-    if (OPENSSL_FOUND)
-        if (NOT OpenSSL_FIND_QUIETLY)
-            message (STATUS "OpenSSL enabled")
-            message(STATUS "OPENSSL_INCLUDES: ${OPENSSL_INCLUDE_DIR}")
-        endif ()
-        include_directories (${OPENSSL_INCLUDE_DIR})
-        add_definitions ("-DUSE_OPENSSL=1")
-    else ()
-        message (STATUS "Skipping OpenSSL support")
-    endif ()
-else ()
-    message (STATUS "OpenSSL disabled")
-endif ()
-
-# end OpenSSL setup
-###########################################################################
-
-
-###########################################################################
 # GIF
 if (USE_GIF)
     find_package (GIF)
@@ -588,5 +513,93 @@ if (USE_DICOM)
     endif ()
 endif()
 # end DCMTK setup
+###########################################################################
+
+
+###########################################################################
+# pybind11
+
+option (BUILD_PYBIND11_FORCE "Force local download/build of Pybind11 even if installed" OFF)
+option (BUILD_MISSING_PYBIND11 "Local download/build of Pybind11 if not installed" ON)
+set (BUILD_PYBIND11_VERSION "v2.2.1" CACHE STRING "Preferred pybind11 version, of downloading/building our own")
+set (PYBIND11_HOME "" CACHE STRING "Installed pybind11 location hint")
+
+macro (find_or_download_pybind11)
+    # If we weren't told to force our own download/build of pybind11, look
+    # for an installed version. Still prefer a copy that seems to be
+    # locally installed in this tree.
+    if (NOT BUILD_PYBIND11_FORCE)
+        find_path (PYBIND11_INCLUDE_DIR pybind11/pybind11.h
+               "${PROJECT_SOURCE_DIR}/ext/pybind11/include"
+               "${PYBIND11_HOME}"
+               "$ENV{PYBIND11_HOME}"
+               )
+    endif ()
+    # If an external copy wasn't found and we requested that missing
+    # packages be built, or we we are forcing a local copy to be built, then
+    # download and build it.
+    if ((BUILD_MISSING_PYBIND11 AND NOT PYBIND11_INCLUDE_DIR) OR BUILD_PYBIND11_FORCE)
+        message (STATUS "Building local Pybind11")
+        set (PYBIND11_INSTALL_DIR "${PROJECT_SOURCE_DIR}/ext/pybind11")
+        set (PYBIND11_GIT_REPOSITORY "https://github.com/pybind/pybind11")
+        if (NOT IS_DIRECTORY ${PYBIND11_INSTALL_DIR}/include)
+            find_package (Git REQUIRED)
+            execute_process(COMMAND
+                            ${GIT_EXECUTABLE} clone ${PYBIND11_GIT_REPOSITORY}
+                            --branch ${BUILD_PYBIND11_VERSION}
+                            ${PYBIND11_INSTALL_DIR}
+                            )
+            if (IS_DIRECTORY ${PYBIND11_INSTALL_DIR}/include)
+                message (STATUS "DOWNLOADED pybind11 to ${PYBIND11_INSTALL_DIR}.\n"
+                         "Remove that dir to get rid of it.")
+            else ()
+                message (FATAL_ERROR "Could not download pybind11")
+            endif ()
+        endif ()
+        set (PYBIND11_INCLUDE_DIR "${PYBIND11_INSTALL_DIR}/include")
+    endif ()
+
+    if (PYBIND11_INCLUDE_DIR)
+        message (STATUS "pybind11 include dir: ${PYBIND11_INCLUDE_DIR}")
+    else ()
+        message (FATAL_ERROR "pybind11 is missing! If it's not on your "
+                 "system, you need to install it, or build with either "
+                 "-DBUILD_MISSING_DEPS=ON or -DBUILD_PYBIND11_FORCE=ON. "
+                 "Or build with -DUSE_PYTHON=OFF.")
+    endif ()
+endmacro()
+
+###########################################################################
+# Tessil/robin-map
+
+set (BUILD_ROBINMAP_VERSION "1e59f1993c7b6eace15032f38b5acb0bc34f530b" CACHE STRING "Preferred Tessil/robin-map version, of downloading/building our own")
+
+macro (find_or_download_robin_map)
+    # Download the headers from github
+    message (STATUS "Downloading local Tessil/robin-map")
+    set (ROBINMAP_INSTALL_DIR "${PROJECT_SOURCE_DIR}/ext/robin-map")
+    set (ROBINMAP_GIT_REPOSITORY "https://github.com/Tessil/robin-map")
+    if (NOT IS_DIRECTORY ${ROBINMAP_INSTALL_DIR}/tsl)
+        find_package (Git REQUIRED)
+        execute_process(COMMAND             ${GIT_EXECUTABLE} clone    ${ROBINMAP_GIT_REPOSITORY} -n ${ROBINMAP_INSTALL_DIR})
+        execute_process(COMMAND             ${GIT_EXECUTABLE} checkout ${BUILD_ROBINMAP_VERSION}
+                        WORKING_DIRECTORY   ${ROBINMAP_INSTALL_DIR})
+
+        if (IS_DIRECTORY ${ROBINMAP_INSTALL_DIR}/tsl)
+            message (STATUS "DOWNLOADED Tessil/robin-map to ${ROBINMAP_INSTALL_DIR}.\n"
+                     "Remove that dir to get rid of it.")
+        else ()
+            message (FATAL_ERROR "Could not download Tessil/robin-map")
+        endif ()
+    endif ()
+    set (ROBINMAP_INCLUDE_DIR "${ROBINMAP_INSTALL_DIR}")
+    if (ROBINMAP_INCLUDE_DIR)
+        message (STATUS "Tessil/robin-map include dir: ${ROBINMAP_INCLUDE_DIR}")
+    else ()
+        message (FATAL_ERROR "Tessil/robin-map is missing!")
+    endif ()
+endmacro()
+
+
 ###########################################################################
 

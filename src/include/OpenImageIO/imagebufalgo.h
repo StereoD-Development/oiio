@@ -43,6 +43,7 @@
 #include <OpenImageIO/fmath.h>
 #include <OpenImageIO/color.h>
 #include <OpenImageIO/array_view.h>
+#include <OpenImageIO/parallel.h>
 
 #include <OpenEXR/ImathMatrix.h>       /* because we need M33f */
 
@@ -90,6 +91,10 @@ class Filter2D;  // forward declaration
 
 
 namespace ImageBufAlgo {
+
+// old name (DEPRECATED 1.9)
+typedef parallel_options parallel_image_options;
+
 
 /// Zero out (set to 0, black) the image region.
 ///
@@ -973,13 +978,6 @@ bool OIIO_API colorconvert (ImageBuf &dst, const ImageBuf &src,
                             ColorConfig *colorconfig=NULL,
                             ROI roi=ROI::All(), int nthreads=0);
 
-OIIO_DEPRECATED("Use the other version. [1.7]")
-bool OIIO_API colorconvert (ImageBuf &dst, const ImageBuf &src,
-                            string_view from, string_view to,
-                            bool unpremult,
-                            ColorConfig *colorconfig,
-                            ROI roi=ROI::All(), int nthreads=0);
-
 /// Copy pixels within the ROI from src to dst, applying a color transform.
 /// In-place operations (dst == src) are supported.
 ///
@@ -1131,7 +1129,12 @@ bool OIIO_API color_map (ImageBuf &dst, const ImageBuf &src,
 /// and if dst is not already initialized, it will be initialized to the ROI
 /// and with 3 color channels.
 ///
-/// The mapname may be one of: "blue-red", "spectrum", "heat".
+/// The mapname may be one of: "inferno", "viridis", "magma", or "plasma",
+/// all of which are perceptually uniform, strictly increasing in luminance,
+/// look good when converted to grayscale, and work for people with all
+/// types of colorblindness. Also supported are the following color maps
+/// that do not having those desirable qualities (and are thus not
+/// recommended): "blue-red", "spectrum", "heat".
 ///
 /// Return true on successs, false on error (with an appropriate error
 /// message set in dst).
@@ -2010,6 +2013,7 @@ bool OIIO_API histogram_draw (ImageBuf &dst,
 enum OIIO_API MakeTextureMode {
     MakeTxTexture, MakeTxShadow, MakeTxEnvLatl,
     MakeTxEnvLatlFromLightProbe,
+    MakeTxBumpWithSlopes,
     _MakeTxLast
 };
 

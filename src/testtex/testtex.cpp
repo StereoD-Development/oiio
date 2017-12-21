@@ -53,6 +53,7 @@
 #include <OpenImageIO/sysutil.h>
 #include <OpenImageIO/strutil.h>
 #include <OpenImageIO/timer.h>
+#include <OpenImageIO/benchmark.h>
 #include "../libtexture/imagecache_pvt.h"
 
 using namespace OIIO;
@@ -105,6 +106,7 @@ static int ntrials = 1;
 static int testicwrite = 0;
 static bool test_derivs = false;
 static bool test_statquery = false;
+static bool invalidate_before_iter = true;
 static Imath::M33f xform;
 static mutex error_mutex;
 void *dummyptr;
@@ -196,6 +198,7 @@ getargs (int argc, const char *argv[])
                   "--threadtimes %d", &threadtimes, "Do thread timings (arg = workload profile)",
                   "--trials %d", &ntrials, "Number of trials for timings",
                   "--wedge", &wedge, "Wedge test",
+                  "--noinvalidate %!", &invalidate_before_iter, "Don't invalidate the cache before each --threadtimes trial",
                   "--testicwrite %d", &testicwrite, "Test ImageCache write ability (1=seeded, 2=generated)",
                   "--teststatquery", &test_statquery, "Test queries of statistics",
                   NULL);
@@ -304,7 +307,7 @@ test_gettextureinfo (ustring filename)
         std::cout << " " << avg[0] << ' ' << avg[1] << ' '
                   << avg[2] << ' ' << avg[3] << "\n";
     ok = texsys->get_texture_info (filename, 0, ustring("averagealpha"),
-                                   TypeDesc::TypeFloat, avg);
+                                   TypeFloat, avg);
     std::cout << "Result of get_texture_info averagealpha = " << (ok?"yes":"no\n");
     if (ok)
         std::cout << " " << avg[0] << "\n";
@@ -1119,8 +1122,12 @@ do_tex_thread_workout (int iterations, int mythread)
     float *dresultds = test_derivs ? ALLOCA (float, nchannels) : NULL;
     float *dresultdt = test_derivs ? ALLOCA (float, nchannels) : NULL;
     TextureSystem::Perthread *perthread_info = texsys->get_perthread_info ();
-    TextureSystem::TextureHandle *texture_handle = texsys->get_texture_handle (filenames[0]);
     int pixel, whichfile = 0;
+
+    std::vector<TextureSystem::TextureHandle *> texture_handles;
+    for (auto f : filenames)
+        texture_handles.emplace_back (texsys->get_texture_handle(f));
+
     ImageSpec spec0;
     texsys->get_imagespec (filenames[0], 0, spec0);
     // Compute a filter size that's between the first and second MIP levels.
@@ -1138,7 +1145,7 @@ do_tex_thread_workout (int iterations, int mythread)
             // texture coordinates all the time, one file), with handles
             // and per-thread data already queried only once rather than
             // per-call.
-            ok = texsys->texture (texture_handle, perthread_info, opt, s, t,
+            ok = texsys->texture (texture_handles[0], perthread_info, opt, s, t,
                                   dsdx, dtdx, dsdy, dtdy, nchannels,
                                   result, dresultds, dresultdt);
             break;
@@ -1192,9 +1199,15 @@ do_tex_thread_workout (int iterations, int mythread)
         if (! ok) {
             s = (((2*pixel) % spec0.width) + 0.5f) / spec0.width;
             t = (((2*((2*pixel) / spec0.width)) % spec0.height) + 0.5f) / spec0.height;
-            ok = texsys->texture (filenames[whichfile], opt, s, t,
-                                  dsdx, dtdx, dsdy, dtdy, nchannels,
-                                  result, dresultds, dresultdt);
+            if (use_handle)
+                ok = texsys->texture (texture_handles[whichfile],
+                                      perthread_info, opt, s, t,
+                                      dsdx, dtdx, dsdy, dtdy, nchannels,
+                                      result, dresultds, dresultdt);
+            else
+                ok = texsys->texture (filenames[whichfile], opt, s, t,
+                                      dsdx, dtdx, dsdy, dtdy, nchannels,
+                                      result, dresultds, dresultdt);
         }
         if (! ok) {
             lock_guard lock (error_mutex);
@@ -1221,7 +1234,8 @@ do_tex_thread_workout (int iterations, int mythread)
 void
 launch_tex_threads (int numthreads, int iterations)
 {
-    texsys->invalidate_all (true);
+    if (invalidate_before_iter)
+        texsys->invalidate_all (true);
     OIIO::thread_group threads;
     for (int i = 0;  i < numthreads;  ++i) {
         threads.create_thread (std::bind(do_tex_thread_workout,iterations,i));
@@ -1355,14 +1369,14 @@ main (int argc, const char *argv[])
 
     texsys = TextureSystem::create ();
     std::cout << "Created texture system\n";
-    texsys->attribute ("statistics:level", 2);
+    texsys->attribute ("statistics:level", verbose ? 2 : 0);
     texsys->attribute ("autotile", autotile);
     texsys->attribute ("automip", (int)automip);
     texsys->attribute ("deduplicate", (int)dedup);
     if (cachesize >= 0)
         texsys->attribute ("max_memory_MB", cachesize);
     else
-        texsys->getattribute ("max_memory_MB", TypeDesc::TypeFloat, &cachesize);
+        texsys->getattribute ("max_memory_MB", TypeFloat, &cachesize);
     if (maxfiles >= 0)
         texsys->attribute ("max_open_files", maxfiles);
     if (searchpath.length())
@@ -1430,8 +1444,8 @@ main (int argc, const char *argv[])
         std::cout << "texture cache size = " << cachesize << " MB\n";
         std::cout << "hw threads = " << Sysutil::hardware_concurrency() << "\n";
         std::cout << "times are best of " << ntrials << " trials\n\n";
-        std::cout << "threads  time (s) efficiency\n";
-        std::cout << "-------- -------- ----------\n";
+        std::cout << "threads  time (s)   speedup efficiency\n";
+        std::cout << "-------- -------- --------- ----------\n";
 
         if (nthreads == 0)
             nthreads = Sysutil::hardware_concurrency();
@@ -1445,9 +1459,11 @@ main (int argc, const char *argv[])
                                    ntrials, &range);
             if (nt == 1)
                 single_thread_time = (float)t;
-            float efficiency = (single_thread_time /*/nt*/) / (float)t;
-            std::cout << Strutil::format ("%2d      %8.2f %6.1f%%    range %.2f\t(%d iters/thread)\n",
-                                          nt, t, efficiency*100.0f, range, its);
+            float speedup = (single_thread_time /*/nt*/) / (float)t;
+            float efficiency = (single_thread_time / nt) / float(t);
+            std::cout << Strutil::format ("%3d     %8.2f   %6.1fx  %6.1f%%    range %.2f\t(%d iters/thread)\n",
+                                          nt, t, speedup, efficiency*100.0f, range, its);
+            std::cout.flush();
             if (! wedge)
                 break;    // don't loop if we're not wedging
         }
@@ -1541,6 +1557,7 @@ main (int argc, const char *argv[])
               << Strutil::memformat (Sysutil::memory_used(true)) << "\n";
     TextureSystem::destroy (texsys);
 
-    std::cout << "\nustrings: " << ustring::getstats(false) << "\n\n";
+    if (verbose)
+        std::cout << "\nustrings: " << ustring::getstats(false) << "\n\n";
     return 0;
 }

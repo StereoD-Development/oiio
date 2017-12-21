@@ -164,10 +164,10 @@ pause (int delay)
 // Helper class to deliver ever longer pauses until we yield our timeslice.
 class atomic_backoff {
 public:
-    atomic_backoff () : m_count(1) { }
+    atomic_backoff (int pausemax=16) : m_count(1), m_pausemax(pausemax) { }
 
     void operator() () {
-        if (m_count <= 16) {
+        if (m_count <= m_pausemax) {
             pause (m_count);
             m_count *= 2;
         } else {
@@ -177,6 +177,7 @@ public:
 
 private:
     int m_count;
+    int m_pausemax;
 };
 
 
@@ -283,6 +284,10 @@ private:
 typedef spin_mutex::lock_guard spin_lock;
 
 
+
+#if 0
+
+// OLD CODE vvvvvvvv
 
 
 /// Spinning reader/writer mutex.  This is just like spin_mutex, except
@@ -393,6 +398,117 @@ private:
     atomic_int m_readers;  // number of readers
     char pad2_[OIIO_CACHE_LINE_SIZE-sizeof(atomic_int)];
 };
+
+
+#else
+
+// vvv New spin rw lock Oct 2017
+
+/// Spinning reader/writer mutex.  This is just like spin_mutex, except
+/// that there are separate locking mechanisms for "writers" (exclusive
+/// holders of the lock, presumably because they are modifying whatever
+/// the lock is protecting) and "readers" (non-exclusive, non-modifying
+/// tasks that may access the protectee simultaneously).
+class spin_rw_mutex {
+public:
+    /// Default constructor -- initialize to unlocked.
+    ///
+    spin_rw_mutex () { }
+
+    ~spin_rw_mutex () { }
+
+    // Do not allow copy or assignment.
+    spin_rw_mutex (const spin_rw_mutex &) = delete;
+    const spin_rw_mutex& operator= (const spin_rw_mutex&) = delete;
+
+    /// Acquire the reader lock.
+    ///
+    void read_lock () {
+        // first increase the readers, and if it turned out nobody was
+        // writing, we're done. This means that acquiring a read when nobody
+        // is writing is a single atomic operation.
+        int oldval = m_bits.fetch_add (1, std::memory_order_acquire);
+        if (! (oldval & WRITER))
+            return;
+        // Oops, we incremented readers but somebody was writing. Backtrack
+        // by subtracting, and do things the hard way.
+        int expected = (--m_bits) & NOTWRITER;
+
+        // Do compare-and-exchange until we can increase the number of
+        // readers by one and have no writers.
+        if (m_bits.compare_exchange_weak(expected, expected+1, std::memory_order_acquire))
+            return;
+        atomic_backoff backoff;
+        do {
+            backoff();
+            expected = m_bits.load() & NOTWRITER;
+        } while (! m_bits.compare_exchange_weak(expected, expected+1, std::memory_order_acquire));
+    }
+
+    /// Release the reader lock.
+    ///
+    void read_unlock () {
+        // Atomically reduce the number of readers.  It's at least 1,
+        // and the WRITER bit should definitely not be set, so this just
+        // boils down to an atomic decrement of m_bits.
+        m_bits.fetch_sub (1, std::memory_order_release);
+    }
+
+    /// Acquire the writer lock.
+    ///
+    void write_lock () {
+        // Do compare-and-exchange until we have just ourselves as writer
+        int expected = 0;
+        if (m_bits.compare_exchange_weak(expected, WRITER, std::memory_order_acquire))
+            return;
+        atomic_backoff backoff;
+        do {
+            backoff();
+            expected = 0;
+        } while (! m_bits.compare_exchange_weak(expected, WRITER, std::memory_order_acquire));
+    }
+
+    /// Release the writer lock.
+    ///
+    void write_unlock () {
+        // Remove the writer bit
+        m_bits.fetch_sub (WRITER, std::memory_order_release);
+    }
+
+    /// Helper class: scoped read lock for a spin_rw_mutex -- grabs the
+    /// read lock upon construction, releases the lock when it exits scope.
+    class read_lock_guard {
+    public:
+        read_lock_guard (spin_rw_mutex &fm) : m_fm(fm) { m_fm.read_lock(); }
+        ~read_lock_guard () { m_fm.read_unlock(); }
+    private:
+        read_lock_guard(const read_lock_guard& other) = delete;
+        read_lock_guard& operator = (const read_lock_guard& other) = delete;
+        spin_rw_mutex & m_fm;
+    };
+
+    /// Helper class: scoped write lock for a spin_rw_mutex -- grabs the
+    /// read lock upon construction, releases the lock when it exits scope.
+    class write_lock_guard {
+    public:
+        write_lock_guard (spin_rw_mutex &fm) : m_fm(fm) { m_fm.write_lock(); }
+        ~write_lock_guard () { m_fm.write_unlock(); }
+    private:
+        write_lock_guard(const write_lock_guard& other) = delete;
+        write_lock_guard& operator = (const write_lock_guard& other) = delete;
+        spin_rw_mutex & m_fm;
+    };
+
+private:
+    // Use one word to hold the reader count, with a high bit indicating
+    // that it's locked for writing.  This will only work if we have
+    // fewer than 2^30 simultaneous readers.  I think that should hold
+    // us for some time.
+    enum { WRITER = 1<<30, NOTWRITER = WRITER-1 };
+    std::atomic<int> m_bits { 0 };
+};
+
+#endif
 
 
 typedef spin_rw_mutex::read_lock_guard spin_rw_read_lock;
@@ -588,13 +704,25 @@ public:
     /// this calling thread) and return true. Otherwise (there are no
     /// pending jobs), return false immediately. This utility is what makes
     /// it possible for non-pool threads to also run tasks from the queue
-    /// when they would ordinarily be idle.
-    bool run_one_task ();
+    /// when they would ordinarily be idle. The thread id of the caller
+    /// should be passed.
+    bool run_one_task (std::thread::id id);
 
     /// Return true if the calling thread is part of the thread pool. This
     /// can be used to limit a pool thread from inadvisedly adding its own
     /// subtasks to clog up the pool.
     bool this_thread_is_in_pool () const;
+
+    /// Register a thread (not already in the thread pool itself) as working
+    /// on tasks in the pool. This is used to avoid recursion.
+    void register_worker (std::thread::id id);
+    /// De-register a thread, saying it is no longer in the process of
+    /// taking work from the thread pool.
+    void deregister_worker (std::thread::id id);
+    /// Is the thread in the pool or currently engaged in taking tasks from
+    /// the pool?
+    bool is_worker (std::thread::id id);
+    bool is_worker () { return is_worker (std::this_thread::get_id()); }
 
 private:
     // Disallow copy construction and assignment
@@ -643,30 +771,74 @@ OIIO_API thread_pool* default_thread_pool ();
 template<typename T=void>
 class task_set {
 public:
-    task_set (thread_pool *pool) { m_pool = pool; }
+    task_set (thread_pool *pool)
+        : m_pool (pool ? pool : default_thread_pool()),
+          m_submitter_thread (std::this_thread::get_id())
+        {}
     ~task_set () { wait(); }
-    void push (std::future<T> &&f) { m_futures.emplace_back (std::move(f)); }
-    void wait (bool block = false) {
+
+    // Return the thread id of the thread that set up this task_set and
+    // submitted its tasks to the thread pool.
+    std::thread::id submitter () const { return m_submitter_thread; }
+
+    // Save a future (presumably returned by a threadpool::push() as part
+    // of this task set.
+    void push (std::future<void> &&f) {
+        DASSERT (std::this_thread::get_id() == submitter() &&
+                 "All tasks in a tast_set should be added by the same thread");
+        m_futures.emplace_back (std::move(f));
+    }
+
+    // Wait for all tasks in the set to finish. If block == true, fully
+    // block while waiting for the pool threads to all finish. If block is
+    // false, then busy wait, and opportunistically run queue tasks yourself
+    // while you are waiting for other tasks to finish.
+    void wait (bool block = false)
+    {
+        DASSERT (submitter() == std::this_thread::get_id());
         const std::chrono::milliseconds wait_time (0);
+        if (m_pool->is_worker (m_submitter_thread))
+            block = true;   // don't get into recursive work stealing
         if (block == false) {
             int tries = 0;
             while (1) {
                 bool all_finished = true;
+                int nfutures = 0, finished = 0;
                 for (auto&& f : m_futures) {
                     // Asking future.wait_for for 0 time just checks the status.
+                    ++nfutures;
                     auto status = f.wait_for (wait_time);
                     if (status != std::future_status::ready)
                         all_finished = false;
+                    else ++finished;
                 }
                 if (all_finished)   // All futures are ready? We're done.
                     break;
                 // We're still waiting on some tasks to complete. What next?
-                if (++tries < 4)    // First few times,
-                    continue;       //   just busy-wait, check status again
+                if (++tries < 4) {   // First few times,
+                    pause(4);        //   just busy-wait, check status again
+                    continue;
+                }
                 // Since we're waiting, try to run a task ourselves to help
                 // with the load. If none is available, just yield schedule.
-                if (! m_pool->run_one_task())
-                    yield();
+                if (! m_pool->run_one_task(m_submitter_thread)) {
+                    // We tried to do a task ourselves, but there weren't any
+                    // left, so just wait for the rest to finish.
+#if 1
+                    yield ();
+#else
+                    // FIXME -- as currently written, if we see an empty queue
+                    // but we're still waiting for the tasks in our set to end,
+                    // we will keep looping and potentially ourselves do work
+                    // that was part of another task set. If there a benefit to,
+                    // once we see an empty queue, only waiting for the existing
+                    // tasks to finish and not altruistically executing any more
+                    // tasks?  This is how we would take the exit now:
+                    for (auto&& f : m_futures)
+                        f.wait ();
+                    break;
+#endif
+                }
             }
         } else {
             // If block is true, just block on completion of all the tasks
@@ -675,13 +847,22 @@ public:
                 f.wait ();
         }
 #ifndef NDEBUG
-        for (auto&& f : m_futures)
-            ASSERT (f.wait_for(wait_time) == std::future_status::ready);
+        check_done ();
 #endif
     }
+
+    // Debugging sanity check, called after wait(), to ensure that all the
+    // tasks were completed.
+    void check_done () {
+        const std::chrono::milliseconds wait_time (0);
+        for (auto&& f : m_futures)
+            ASSERT (f.wait_for(wait_time) == std::future_status::ready);
+    }
+
 private:
     thread_pool *m_pool;
-    std::vector<std::future<T>> m_futures;
+    std::thread::id m_submitter_thread;
+    std::vector<std::future<void>> m_futures;
 };
 
 

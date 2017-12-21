@@ -1,10 +1,145 @@
-Release 1.8 (in progress) -- compared to 1.7.x
+Release 1.9 (in progress) -- compared to 1.8.x
 ----------------------------------------------
 New minimum dependencies:
- * **C++11** (gcc 4.8.2, clang 3.3, or MSVS 2013)
- * **Boost >= 1.53**
- * **CMake >= 3.0**
+
+Major new features and improvements:
+* Major refactor of Exif metadata handling, including much more complete
+  metadata support for RAW formats and support of camera "maker notes"
+  for Canon cameras. #1774 (1.9.0)
+* New "null" I/O plugin -- null reader just returns black (or constant
+  colored) pixels, null writer just returns. This can be used for
+  benchmarking (to eliminate all actual file I/O time), "dry run" where you
+  want to test without creating output files. #1778 (1.9.0)
+
+Public API changes:
+* **Python binding overhaul**
+  The Python bindings have been reimplemented with `pybind11`
+  (https://github.com/pybind/pybind11), no longer with Boost.Python.
+  #1801 (1.9.1)
+  In the process (partly due to what's easy or hard in pybind11, but partly
+  just because it caused us to revisit the python APIs), there are some minor
+  API changes, some of which are breaking! To wit:
+    * All of the functions that are passed or return blocks of pixels
+      (such as `ImageInput.read_image()`) now use Numpy `ndarray` objects
+      indexed as `[y][x][channel]` (no longer using old-style Python
+      `array.array` and flattened to 1D).
+    * Specilized enum type `ImageInput.OpenMode` has been replaced by string
+      parameters, so for example, old `ImageInput.open (filename, ImageInput.Create)`
+      is now `ImageInput.open (filename, "Create")`
+    * Any function that previously took a parameter of type `TypeDesc`
+      or `TypeDesc.BASETYPE` now will accept a string that signifies the
+      type. For example, `ImageBuf.set_write_format("float")` is now a
+      synonym for `ImageBuf.set_write_format(oiio.TypeDesc(oiio.FLOAT))`.
+* ColorConfig changes: ColorConfig methods now return shared pointers to
+  `ColorProcessor`s rather than raw pointers. It is therefore no longer
+  required to make an explicit delete call. Created ColorProcessor objects
+  are now internally cached, so asking for the same color transformation
+  multiple times is no longer expensive. The ColorProcessor interface is
+  now in `color.h` and can be directly used to perform transformations on
+  individual colors (previously it was just an opaque pointer and could
+  only be used to pass into certain IBA functions). The color space names
+  "rgb" and "default" are now understood to be synonyms for the default
+  "linear" color space. #1788 (1.9.0)
+* Remove long-deprecated API calls:
+    * ImageBuf::get_pixels/get_pixel_channels varieties deprecated since 1.6.
+    * ImageBuf::set_deep_value_uint, deprecated since 1.7.
+    * ImageBuf::deep_alloc, deprecated since 1.7.
+    * ImageBufAlgo::colorconvert variety deprecated since 1.7.
+    * ImageCache::clear, deprecated since 1.7.
+    * ImageCache::add_tile variety deprecated since 1.6.
+
+Fixes, minor enhancements, and performance improvements:
+* oiiotool
+    * Improved logic for propagating the pixel data format through
+      multiple operations, especially for files with multiple subimages.
+      #1769 (1.9.0/1.8.6)
+    * Outputs are now written to temporary files, then atomically moved
+      to the specified filename at the end. This makes it safe for oiiotool
+      to "overwrite" a file (i.e. `oiiotool in.tif ... -o out.tif`) without
+      problematic situations where the file is truncated or overwritten
+      before the reading is complete. #1797 (1.8.7/1.9.1)
+* ImageCache/TextureSystem:
+    * Improved stats on how long we wait for ImageInput mutexes.
+      #1779 (1.9.0/1.8.6)
+    * Improved performance of IC/TS tile and file caches under heavy
+      contention from many threads. #1780 (1.9.0)
+    * Increased the default `max_tile_channels` limit from 5 to 6.
+      #1803 (1.9.1)
+* All string->numeric parsing and numeric->string formatting is now
+  locale-independent and always uses '.' as decimal marker. #1796 (1.9.0)
+
+Build/test system improvements:
+* testtex: make the "thread workout" cases all honor `--handle`. #1778 (1.9.0)
+* Fixes for Windows build. #1793, #1794 (1.9.0/1.8.6)
+* Fix build bug where if the makefile wrapper got `CODECOV=0`, it would
+  force a "Debug" build (required for code coverage tests) even though code
+  coverage is instructed to be off. (It would be fine if you didn't specify
+  `CODECOV` at all.) #1792 (1.9.0/1.8.6)
+* Build: Fix broken build when Freetype was not found or disabled. #1800
+  (1.8.6/1.9.1)
+* Build: Boost.Python is no longer a dependency, but `pybind11` is. If
+  not found on the system, it will be automatically downloaded. #1801 (1.9.1)
+
+Developer goodies / internals:
+* array_view.h: added begin(), end(), cbegin(), cend() methods, and new
+  constructors from pointer pairs and from std::array. (1.9.0/1.8.6)
+* fmath.h: Now defines preprocessor symbol `OIIO_FMATH_H` so other files can
+  easily detect if it has been included. (1.9.0/1.8.6)
+* paramlist.h: The ParamValue class has added get_int_indexed() and
+  get_float_indexed() methods. #1773 (1.9.0/1.8.6)
+* simd.h: Fixed build break when AVX512VL is enabled. #1781 (1.9.0/1.8.6)
+* string.h:
+    * All string->numeric parsing and numeric->string formatting is now
+      locale-independent and always uses '.' as decimal marker. #1796 (1.9.0)
+    * New `Strutil::stof()`, `stoi()`, `stoui()`, `stod()` functions for
+      easy parsing of strings to numbers. Also tests `Strutil::string_is_int()`
+      and `string_is_float()`. #1796 (1.9.0)
+* thread.h: Reimplementaiton of `spin_rw_mutex` has much better performance
+  when many threads are accessing at once, especially if most of them are
+  reader threads. #1787 (1.9.0)
+* unittest.h: Made references to Strutil fully qualified in OIIO namespace,
+  so that `unittest.h` can be more easily used outside of the OIIO codebase.
+  #1791 (1.9.0)
+
+
+Release 1.8.6 (1 Nov 2017) -- compared to 1.8.5
+-------------------------------------------------
+* oiiotool: Improved logic for propagating the pixel data format through
+  multiple operations, especially for files with multiple subimages.
+  #1769
+* ImageCache/TextureSystem: improved stats on how long we wait for
+  ImageInput mutexes. #1779
+* Build: Fix build bug where if the makefile wrapper got CODECOV=0, it would
+  force a "Debug" build (required for code coverage tests) even though code
+  coverage is instructed to be off. (It would be fine if you didn't specify
+  CODECOV at all.) #1792
+* Build: minor fixes for Windows build. #1793, #1794
+* Developers: The ParamValue class has added get_int_indexed() and
+  get_float_indexed() methods. #1773
+* Developers: array_view added begin(), end(), cbegin(), cend() methods,
+  and new constructors from pointer pairs and from std::array.
+* Developers: Fixed build break in simd.h when AVX512VL is enabled. #1781
+* Developers: fmath.h now defined OIIO_FMATH_H so other files can easily
+  detect if it has been included.
+* Build: Fix broken build when Freetype was not found or disabled. #1800
+* Python: fixed missing exposure of RATIONAL enum value. #1799
+
+
+Release 1.8 (1.8.5 - beta) -- compared to 1.7.x
+----------------------------------------------
+New minimum dependencies:
+ * **C++11** (should also build with C++14 and C++17)
+ * **Compilers**: gcc 4.8.2 - gcc 7, clang 3.3 - 5.0, or MSVS 2013 - 2017
+ * **Boost >= 1.53** (tested up through 1.65)
+ * **CMake >= 3.2.2** (tested up through 3.9)
+ * **OpenEXR >= 2.0** (recommended: 2.2)
  * (optional) **Qt >= 5.6**
+ * (optional) **Python >= 2.7** (3.x is also ok)
+
+**Changes to install layout**: fonts now get installed to
+  `prefix/share/fonts/OpenImageIO`, OIIO docs now get installed to
+  `prefix/share/doc/OpenImageIO`, and the Python module gets installed to
+  `prefix/lib/pythonMAJ.MIN/site-packages`. #1747 #1760 (1.8.5)
 
 Major new features and improvements:
 * New oiiotool features:
@@ -46,14 +181,23 @@ Major new features and improvements:
    * `deep_holdout()` culls all samples that are farther away than the
      opaque depth of a second holdout image. #1691 (1.8.4)
 * DICOM file format support (currently read-only). DICOM is the standard for
-  medical imaging data. Will   only build if dependency "dcmtk" is found at
+  medical imaging data. Will only build if dependency "dcmtk" is found at
   build time. #1534 (1.8.1)
+* Experimental: The TextureSystem API has been extended to support batches
+  of texture lookups in a SIMD fashion. At present, only the new API was
+  added, a full implementation is in progress and may not be forthcoming
+  or reliable until 1.9. Even the API is experimental, and may change for
+  future releases. #1733 (1.8.5)
 
 Public API changes:
 * TypeDesc:
    * Rational support: new 'semantic' hint RATIONAL and TypeDesc::Rational.
      A rational is an int of aggregate VEC2 and hint RATIONAL, and should
      be interpreted as val[0]/val[1]. #1698 (1.8.5)
+   * Added OIIO-scoped `static constexpr` versions of preconstructed
+     TypeDescs (e.g., `TypeFloat`). We are deprecating the ones that were
+     static data members of TypeDesc (e.g., TypeDesc::TypeFloat), they will
+     be removed in some future release. (1.8.5)
 * ImageSpec:
    * New `ImageSpec::serialize()` returns a string with a serialized version
      of the contents of the ImageSpec. It may be text (human readable, like
@@ -182,6 +326,9 @@ Fixes, minor enhancements, and performance improvements:
    * You can set rational metadata on the command line like this:
       `oiiotool foo.exr --attrib:type=rational onehalf "50/100" -o rat.exr`
       #1698 (1.8.5)
+   * `--fillholes` fixed a bug where, if asked to operate on an image with
+      nonzero origin (crop, overscan, shrink-wrap), it would incorrectly
+      move the pixels to the origin. #1768 (1.8.5)
 * ImageBufAlgo:
    * `channel_append()` resolves redundant channel names by using the
      subimage name, if available. #1498 (1.8.0/1.7.8)
@@ -198,6 +345,9 @@ Fixes, minor enhancements, and performance improvements:
    * `deep_merge()` performance has been greatly improved. #1739 (1.8.5)
    * `resample()` fixed a subtle 1/2 pixel shift, now it more closely
       aligns with `resize()`. #1694 (1.8.4)
+   * `fillholes_pushpull()` fixed a bug where, if asked to operate on an
+      image with nonzero origin (crop, overscan, shrink-wrap), it would
+      incorrectly move the pixels to the origin. #1768 (1.8.5)
 * ImageBuf:
    * Fix broken threads(n) method, which didn't correctly pass the right
      number of threads along. #1622. (1.8.3/1.7.12)
@@ -237,6 +387,18 @@ Fixes, minor enhancements, and performance improvements:
      an OpenColorIO config file, just like `oiiotool `--colorconfig`.
      #1692 (1.8.4)
    * Fix rare edge case crash in ImageCache. #1696 (1.8.4/1.7.15)
+   * Improved error messages for broken files. Specifically, it's much more
+     clear now when a file is broken because it's being rejected as a
+     texture because it's untiled or not MIP-mapped. #1751 (1.8.5)
+   * The maketx-generated metadata "oiio:SHA-1", "oiio:ConstantColor" and
+     "oiio:AverageColor" are ignored if the file has signs that it was not
+     directly generated by `maketx` or `oiiotool -otex` (specifically, if
+     it's not tiled, has no "textureformat" tag, or if its "software" tag
+     doesn't mention maketx or oiiotool). This helps for the case where a
+     maketx-generated file is loaded into PhotoShop (or otherwise altered),
+     saved with different pixel values but the old SHA-1, which would no
+     longer be valid and therefore cause the new file to be misidentified
+     as a duplicate texture even though it's not. #1762 (1.8.5)
 * Bug fix to possible crashes when adding dither to tiled file output
   (buffer size miscalculation). #1518 (1.8.0/1.7.8)
 * Make sure that sRGB<->linear color transform still work (in the obvious
@@ -296,6 +458,13 @@ Fixes, minor enhancements, and performance improvements:
      images (supported in libraw 0.18 or newer). #1626 (1.8.3/1.7.13)
    * Add "raw:user_sat" configuration attribute to the reader.
      #1666 (1.7.15/1.8.4)
+   * The pixels are now decoded (expensive) only when they are read, not
+     when the file is first opened. This makes raw reading much faster for
+     apps that are only interested in the metadata and not the pixel data.
+     #1741 (1.8.5)
+   * Unpack pixels when they are needed, not when the file is opened. This
+     makes it much faster to read RAW file only to extract the metadata,
+     if you don't need the pixel values. #1741 (1.8.5)
 * RLA:
    * Fix RLA reading and writing with certain channel orders and mixded data
      formats. #1499 (1.8.0/1.7.8)
@@ -336,8 +505,14 @@ Fixes, minor enhancements, and performance improvements:
 * Improved handling and color conversion of gamma-corrected images (DPX,
   HDR, PNG, RLA, Targa) by supporting linearization correctly even in the
   presence of OCIO configs that don't know about it. #1684 (1.8.4)
+* Fixed static initialization order fiasco error involving interaction
+  between ColorConfig and Strutil. #1757 (1.8.5)
 
 Build/test system improvements:
+* **Changes to install layout**: fonts now get installed to
+  `prefix/share/fonts/OpenImageIO`, OIIO docs now get installed to
+  `prefix/share/doc/OpenImageIO`, and the Python module gets installed to
+  `prefix/lib/pythonMAJ.MIN/site-packages`. #1747 #1760 (1.8.5)
 * Support for building against ffmpeg 3.1 (their API has changed).
   #1515 (1.8.0/1.7.8)
 * Build no longer gets confused about include files from older installations
@@ -369,6 +544,11 @@ Build/test system improvements:
   deprecated. #1711 (1.8.5)
 * Make the search for boost_python3 more reliable. #1727 (1.8.5)
 * Fix python site-packages path for installation. #1722 (1.8.5)
+* Fixes for building with gcc 7. (1.8.5)
+* Support and fixes for building with clang 5.0. #1746 (1.8.5)
+* Support/fixes for Boost 1.65. #1553 (1.8.5)
+* Simplify CMake scripts by using GNUInstallDirs to set standard installation
+  paths. #1747 (1.8.5)
 
 Developer goodies / internals:
 * Sysutil::Term formatting now works properly in Windows (though is only
@@ -382,13 +562,19 @@ Developer goodies / internals:
    * Change deprecated C headers (such as `<ctype.h>`) to C++ (`<cctype>`).
      #1649 (1.8.4)
    * Use `std::vector<>::emplace_back()` where applicable. #1657 (1.8.4)
+   * Mark ImageInput/ImageOutput derived classes as 'final'. (1.8.5)
 * array_view.h:
    * Add front() and back() methods. #1724 (1.8.5)
+   * Simplified array_view template to be 1D only. #1734 (1.8.5)
 * atomic.h:
    * Added atomic_min and atomic_max. #1661 (1.8.4)
    * Added atomic_fetch_add for `std::atomic<float>` and double. #1661 (1.8.4)
    * Assume std::atomic is available, remove all code that is only needed
      for pre-C++11. #1661 (1.8.4)
+* benchmark.h:
+   * New `Benchmarker` class utility for micro-benchmarking. #1577 (1.8.5)
+   * Moved time_trial, timed_thead_wedge, DoNotOptimize, clobber_all_memory
+     to benchmark.h. #1577 (1.8.5)
 * errorhandler.h: Change all ErrorHandler methods to use variadic templates
   rather than varargs. #1653 (1.8.4)
 * filesystem.h:
@@ -401,6 +587,9 @@ Developer goodies / internals:
      evenly-spaced knots. #1552 (1.8.1)
    * Slight reformulation of clamp() ensures sane results even with NaN
      parameters. #1617 (1.8.3)
+   * Bug fixes to `ifloor()` and `floorfrac()`, which turned out to give
+     incorrect results for exact negative integer values. Also added
+     simd vector-based versions of `floorfrac`. #1766 (1.8.5)
 * paramlist.h:
    * ParamValueList has been refactored and now inherets from, rather than
      containts, a `std::vector<ParamValue>`. This removes most of the
@@ -422,6 +611,9 @@ Developer goodies / internals:
      non-thread-jumbled replacements for C versions. #1579, #1656 (1.8.1, 1.8.4)
    * `from_string<>` has been extended to 'unsigned int'. (1.8.3/1.7.13)
    * `Strutil::parse_identifier_if` #1647 (1.8.3)
+   * safe_strcpy now takes a string_view, and more closely conforms to the
+     behavior of strncpy by filling in the extra space with 0 padding.
+     (1.8.5)
 * simd.h:
    * Add a matrix44 constructor from 16 floats. #1552 (1.8.1)
    * Renamed files floatN, intN, boolN to vfloatN, vintN, vboolN, to avoid
@@ -430,6 +622,12 @@ Developer goodies / internals:
      #1719 (1.8.5)
    * load_mask, store_mask, and scatter/gather added for all types.
      #1732 (1.8.5)
+   * Renamed `floori()` to `ifloor()` to match the analogous scalar function
+     in fmath.h. #1766 (1.8.5)
+* strided_ptr.h: The `strided_ptr<>` template is now also templated on
+     the stride units -- the default is to measure strides in units of
+     sizeof(T), but it's possible to override and measure in bytes (the old
+     behavior). #1758 (1.8.5)
 * thread.h:
    * thread_pool class offers true persistent thread pool.
      #1556, #1581 (1.8.1)
@@ -465,6 +663,12 @@ Docs:
 * Fix 'Building OIIO on Windows' link. #1590 (1.8.1)
 
 
+
+Release 1.7.17 (1 Sep 2017) -- compared to 1.7.16
+-------------------------------------------------
+* Repair build breaks against Boost 1.65. #1753
+* Fix a subtle static initialization order problem. #1757
+* Build: Improved finding LibRaw. #1749
 
 Release 1.7.16 (1 Aug 2017) -- compared to 1.7.15
 -------------------------------------------------

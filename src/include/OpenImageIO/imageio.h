@@ -359,8 +359,7 @@ public:
     /// For a given parameter p, format the value nicely as a string.  If
     /// 'human' is true, use especially human-readable explanations (units,
     /// or decoding of values) for certain known metadata.
-    static std::string metadata_val (const ParamValue &p,
-                              bool human=false);
+    static std::string metadata_val (const ParamValue &p, bool human=false);
 
     enum SerialFormat  { SerialText, SerialXML };
     enum SerialVerbose { SerialBrief, SerialDetailed, SerialDetailedHuman };
@@ -1034,7 +1033,6 @@ public:
     /// the distance (in bytes) between successive pixels, scanlines,
     /// and volumetric slices, respectively.  Strides set to AutoStride
     /// imply 'contiguous' data in the shape of a full tile, i.e.,
-
     ///     xstride == spec.nchannels*format.size()
     ///     ystride == xstride*spec.tile_width
     ///     zstride == ystride*spec.tile_height
@@ -1305,14 +1303,14 @@ OIIO_API std::string geterror ();
 OIIO_API bool attribute (string_view name, TypeDesc type, const void *val);
 // Shortcuts for common types
 inline bool attribute (string_view name, int val) {
-    return attribute (name, TypeDesc::TypeInt, &val);
+    return attribute (name, TypeInt, &val);
 }
 inline bool attribute (string_view name, float val) {
-    return attribute (name, TypeDesc::TypeFloat, &val);
+    return attribute (name, TypeFloat, &val);
 }
 inline bool attribute (string_view name, string_view val) {
     const char *s = val.c_str();
-    return attribute (name, TypeDesc::TypeString, &s);
+    return attribute (name, TypeString, &s);
 }
 
 /// Get the named global attribute of OpenImageIO, store it in *val.
@@ -1356,33 +1354,33 @@ inline bool attribute (string_view name, string_view val) {
 OIIO_API bool getattribute (string_view name, TypeDesc type, void *val);
 // Shortcuts for common types
 inline bool getattribute (string_view name, int &val) {
-    return getattribute (name, TypeDesc::TypeInt, &val);
+    return getattribute (name, TypeInt, &val);
 }
 inline bool getattribute (string_view name, float &val) {
-    return getattribute (name, TypeDesc::TypeFloat, &val);
+    return getattribute (name, TypeFloat, &val);
 }
 inline bool getattribute (string_view name, char **val) {
-    return getattribute (name, TypeDesc::TypeString, val);
+    return getattribute (name, TypeString, val);
 }
 inline bool getattribute (string_view name, std::string &val) {
     ustring s;
-    bool ok = getattribute (name, TypeDesc::TypeString, &s);
+    bool ok = getattribute (name, TypeString, &s);
     if (ok)
         val = s.string();
     return ok;
 }
 inline int get_int_attribute (string_view name, int defaultval=0) {
     int val;
-    return getattribute (name, TypeDesc::TypeInt, &val) ? val : defaultval;
+    return getattribute (name, TypeInt, &val) ? val : defaultval;
 }
 inline float get_float_attribute (string_view name, float defaultval=0) {
     float val;
-    return getattribute (name, TypeDesc::TypeFloat, &val) ? val : defaultval;
+    return getattribute (name, TypeFloat, &val) ? val : defaultval;
 }
 inline string_view get_string_attribute (string_view name,
                                  string_view defaultval = string_view()) {
     ustring val;
-    return getattribute (name, TypeDesc::TypeString, &val) ? string_view(val) : defaultval;
+    return getattribute (name, TypeString, &val) ? string_view(val) : defaultval;
 }
 
 
@@ -1471,55 +1469,6 @@ OIIO_API bool copy_image (int nchannels, int width, int height, int depth,
                           void *dst, stride_t dst_xstride,
                           stride_t dst_ystride, stride_t dst_zstride);
 
-/// Decode a raw Exif data block and save all the metadata in an
-/// ImageSpec.  Return true if all is ok, false if the exif block was
-/// somehow malformed.  The binary data pointed to by 'exif' should
-/// start with a TIFF directory header.
-OIIO_API bool decode_exif (string_view exif, ImageSpec &spec);
-OIIO_API bool decode_exif (const void *exif, int length, ImageSpec &spec); // DEPRECATED (1.8)
-
-/// Construct an Exif data block from the ImageSpec, appending the Exif 
-/// data as a big blob to the char vector.
-OIIO_API void encode_exif (const ImageSpec &spec, std::vector<char> &blob);
-
-/// Helper: For the given OIIO metadata attribute name, look up the Exif tag
-/// ID, TIFFDataType (expressed as an int), and count. Return true and fill
-/// in the fields if found, return false if not found.
-OIIO_API bool exif_tag_lookup (string_view name, int &tag,
-                               int &tifftype, int &count);
-
-/// Add metadata to spec based on raw IPTC (International Press
-/// Telecommunications Council) metadata in the form of an IIM
-/// (Information Interchange Model).  Return true if all is ok, false if
-/// the iptc block was somehow malformed.  This is a utility function to
-/// make it easy for multiple format plugins to support embedding IPTC
-/// metadata without having to duplicate functionality within each
-/// plugin.  Note that IIM is actually considered obsolete and is
-/// replaced by an XML scheme called XMP.
-OIIO_API bool decode_iptc_iim (const void *iptc, int length, ImageSpec &spec);
-
-/// Find all the IPTC-amenable metadata in spec and assemble it into an
-/// IIM data block in iptc.  This is a utility function to make it easy
-/// for multiple format plugins to support embedding IPTC metadata
-/// without having to duplicate functionality within each plugin.  Note
-/// that IIM is actually considered obsolete and is replaced by an XML
-/// scheme called XMP.
-OIIO_API void encode_iptc_iim (const ImageSpec &spec, std::vector<char> &iptc);
-
-/// Add metadata to spec based on XMP data in an XML block.  Return true
-/// if all is ok, false if the xml was somehow malformed.  This is a
-/// utility function to make it easy for multiple format plugins to
-/// support embedding XMP metadata without having to duplicate
-/// functionality within each plugin.
-OIIO_API bool decode_xmp (const std::string &xml, ImageSpec &spec);
-
-/// Find all the relavant metadata (IPTC, Exif, etc.) in spec and
-/// assemble it into an XMP XML string.  This is a utility function to
-/// make it easy for multiple format plugins to support embedding XMP
-/// metadata without having to duplicate functionality within each
-/// plugin.  If 'minimal' is true, then don't encode things that would
-/// be part of ordinary TIFF or exif tags.
-OIIO_API std::string encode_xmp (const ImageSpec &spec, bool minimal=false);
 
 // All the wrap_foo functions implement a wrap mode, wherein coord is
 // altered to be origin <= coord < origin+width.  The return value

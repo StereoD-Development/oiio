@@ -38,6 +38,8 @@
 
 #pragma once
 
+#include <utility> // std::forward
+
 // Make sure all platforms have the explicit sized integer types
 #if defined(_MSC_VER) && _MSC_VER < 1600
    typedef __int8  int8_t;
@@ -101,7 +103,7 @@
 // packages is compiling against OIIO and using these headers (OIIO may be
 // C++11 but the client package may be older, or vice versa -- use these two
 // symbols to differentiate these cases, when important).
-#if (__cplusplus >= 201700L)
+#if (__cplusplus >= 201703L)
 #  define OIIO_CPLUSPLUS_VERSION  17
 #  define OIIO_CONSTEXPR14        constexpr
 #elif (__cplusplus >= 201402L)
@@ -303,6 +305,18 @@
 #endif
 
 
+// OIIO_NO_SANITIZE_ADDRESS can be used to mark a function that you don't
+// want address sanitizer to catch. Only use this if you know there are
+// false positives that you can't easily get rid of.
+// This should work for any clang >= 3.3 and gcc >= 4.8, which are
+// guaranteed by our minimum requirements.
+#if defined(__clang__) || defined (__GNUC__)
+#  define OIIO_NO_SANITIZE_ADDRESS __attribute__((no_sanitize_address))
+#else
+#  define OIIO_NO_SANITIZE_ADDRESS
+#endif
+
+
 // Try to deduce endianness
 #if (defined(_WIN32) || defined(__i386__) || defined(__x86_64__))
 #  ifndef __LITTLE_ENDIAN__
@@ -383,6 +397,26 @@ inline bool cpu_has_avx512er() {int i[4]; cpuid(i,7,0); return (i[1] & (1<<27)) 
 inline bool cpu_has_avx512cd() {int i[4]; cpuid(i,7,0); return (i[1] & (1<<28)) != 0; }
 inline bool cpu_has_avx512bw() {int i[4]; cpuid(i,7,0); return (i[1] & (1<<30)) != 0; }
 inline bool cpu_has_avx512vl() {int i[4]; cpuid(i,7,0); return (i[1] & (0x80000000 /*1<<31*/)) != 0; }
+
+// portable aligned malloc
+void* aligned_malloc(std::size_t size, std::size_t align);
+void  aligned_free(void* ptr);
+
+// basic wrappers to new/delete over-aligned types since this isn't guaranteed to be supported until C++17
+template <typename T, class... Args>
+inline T* aligned_new(Args&&... args) {
+    static_assert(alignof(T) > alignof(void*), "Type doesn't seem to be over-aligned, aligned_new is not required");
+    void* ptr = aligned_malloc(sizeof(T), alignof(T));
+    return ptr ? new (ptr) T(std::forward<Args>(args)...) : nullptr;
+}
+
+template <typename T>
+inline void aligned_delete(T* t) {
+    if (t) {
+        t->~T();
+        aligned_free(t);
+    }
+}
 
 
 OIIO_NAMESPACE_END

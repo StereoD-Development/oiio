@@ -67,7 +67,7 @@ ParamValue::init_noclear (ustring _name, TypeDesc _type, int _nvalues,
             if (_value)
                 memcpy (&m_data, _value, size);
             else
-                m_data.localval = 0;
+                memset (&m_data, 0, sizeof(m_data));
             m_copy = false;
             m_nonlocal = false;
         } else {
@@ -152,26 +152,35 @@ ParamValue::ParamValue (string_view name, TypeDesc type, string_view value)
 int
 ParamValue::get_int (int defaultval) const
 {
-    if (type() == TypeDesc::INT)
-        return get<int>();
-    if (type() == TypeDesc::UINT)
-        return (int) get<unsigned int>();
-    if (type() == TypeDesc::INT16)
-        return get<short>();
-    if (type() == TypeDesc::UINT16)
-        return get<unsigned short>();
-    if (type() == TypeDesc::INT8)
-        return get<char>();
-    if (type() == TypeDesc::UINT8)
-        return get<unsigned char>();
-    if (type() == TypeDesc::INT64)
-        return get<long long>();
-    if (type() == TypeDesc::UINT64)
-        return get<unsigned long long>();
-    if (type() == TypeDesc::STRING) {
+    return get_int_indexed (0, defaultval);
+}
+
+
+
+int
+ParamValue::get_int_indexed (int index, int defaultval) const
+{
+    int base = type().basetype;
+    if (base == TypeDesc::INT)
+        return get<int>(index);
+    if (base == TypeDesc::UINT)
+        return (int) get<unsigned int>(index);
+    if (base == TypeDesc::INT16)
+        return get<short>(index);
+    if (base == TypeDesc::UINT16)
+        return get<unsigned short>(index);
+    if (base == TypeDesc::INT8)
+        return get<char>(index);
+    if (base == TypeDesc::UINT8)
+        return get<unsigned char>(index);
+    if (base == TypeDesc::INT64)
+        return get<long long>(index);
+    if (base == TypeDesc::UINT64)
+        return get<unsigned long long>(index);
+    if (base == TypeDesc::STRING) {
         // Only succeed for a string if it exactly holds something that
         // excatly parses to an int value.
-        string_view str = get<ustring>();
+        string_view str = get<ustring>(index);
         int val = defaultval;
         if (Strutil::parse_int(str, val) && str.empty())
             return val;
@@ -184,40 +193,51 @@ ParamValue::get_int (int defaultval) const
 float
 ParamValue::get_float (float defaultval) const
 {
-    if (type() == TypeDesc::FLOAT)
-        return get<float>();
-    if (type() == TypeDesc::HALF)
-        return get<half>();
-    if (type() == TypeDesc::DOUBLE)
-        return get<double>();
-    if (type() == TypeDesc::INT)
-        return get<int>();
-    if (type() == TypeDesc::UINT)
-        return get<unsigned int>();
-    if (type() == TypeDesc::INT16)
-        return get<short>();
-    if (type() == TypeDesc::UINT16)
-        return get<unsigned short>();
-    if (type() == TypeDesc::INT8)
-        return get<char>();
-    if (type() == TypeDesc::UINT8)
-        return get<unsigned char>();
-    if (type() == TypeDesc::INT64)
-        return get<long long>();
-    if (type() == TypeDesc::UINT64)
-        return get<unsigned long long>();
-    if (type() == TypeDesc::STRING) {
+    return get_float_indexed (0, defaultval);
+}
+
+
+
+float
+ParamValue::get_float_indexed (int index, float defaultval) const
+{
+    int base = type().basetype;
+    if (base == TypeDesc::FLOAT)
+        return get<float>(index);
+    if (base == TypeDesc::HALF)
+        return get<half>(index);
+    if (base == TypeDesc::DOUBLE)
+        return get<double>(index);
+    if (base == TypeDesc::INT) {
+        if (type().aggregate == TypeDesc::VEC2 &&
+            type().vecsemantics == TypeDesc::RATIONAL) {
+            int num = get<int>(2*index+0);
+            int den = get<int>(2*index+1);
+            return den ? float(num)/float(den) : 0.0f;
+        }
+        return get<int>(index);
+    }
+    if (base == TypeDesc::UINT)
+        return get<unsigned int>(index);
+    if (base == TypeDesc::INT16)
+        return get<short>(index);
+    if (base == TypeDesc::UINT16)
+        return get<unsigned short>(index);
+    if (base == TypeDesc::INT8)
+        return get<char>(index);
+    if (base == TypeDesc::UINT8)
+        return get<unsigned char>(index);
+    if (base == TypeDesc::INT64)
+        return get<long long>(index);
+    if (base == TypeDesc::UINT64)
+        return get<unsigned long long>(index);
+    if (base == TypeDesc::STRING) {
         // Only succeed for a string if it exactly holds something
         // that excatly parses to a float value.
-        string_view str = get<ustring>();
+        string_view str = get<ustring>(index);
         float val = defaultval;
         if (Strutil::parse_float(str, val) && str.empty())
             return val;
-    }
-    if (type() == TypeDesc::TypeRational) {
-        int num = get<int>(0);
-        int den = get<int>(1);
-        return den ? float(num)/float(den) : 0.0f;
     }
 
     return defaultval;
@@ -283,7 +303,15 @@ ParamValue::get_string (int maxsize) const
             formatType< int >(*this, n, "%d", out);
         }
     } else if (element.basetype == TypeDesc::UINT) {
-        formatType< unsigned int >(*this, n, "%u", out);
+        if (element.vecsemantics == TypeDesc::RATIONAL && element.aggregate == TypeDesc::VEC2) {
+            const int *val = (const int *)data();
+            for (int i = 0;  i < n;  ++i, val += 2) {
+                if (i) out += ", ";
+                out += Strutil::format ("%d/%d", val[0], val[1]);
+            }
+        } else {
+            formatType< unsigned int >(*this, n, "%u", out);
+        }
     } else if (element.basetype == TypeDesc::UINT16) {
         formatType< unsigned short >(*this, n, "%u", out);
     } else if (element.basetype == TypeDesc::INT16) {
@@ -449,6 +477,48 @@ ParamValueList::get_ustring (string_view name, string_view defaultval,
     auto p = find (name, convert ? TypeDesc::UNKNOWN : TypeDesc::STRING,
                    casesensitive);
     return (p == cend()) ? ustring(defaultval) : p->get_ustring();
+}
+
+
+
+void
+ParamValueList::remove (string_view name, TypeDesc type, bool casesensitive)
+{
+    auto p = find (name, type, casesensitive);
+    if (p != end())
+        erase (p);
+}
+
+
+
+bool
+ParamValueList::contains (string_view name, TypeDesc type, bool casesensitive)
+{
+    auto p = find (name, type, casesensitive);
+    return (p != end());
+}
+
+
+
+void
+ParamValueList::add_or_replace (const ParamValue& pv, bool casesensitive)
+{
+    iterator p = find (pv.name(), pv.type(), casesensitive);
+    if (p != end())
+        *p = pv;
+    else
+        emplace_back (pv);
+}
+
+
+void
+ParamValueList::add_or_replace (ParamValue&& pv, bool casesensitive)
+{
+    iterator p = find (pv.name(), pv.type(), casesensitive);
+    if (p != end())
+        *p = pv;
+    else
+        emplace_back (pv);
 }
 
 

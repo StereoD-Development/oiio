@@ -45,8 +45,6 @@ def aggregate_enum_test():
         oiio.VEC4
         oiio.MATRIX33
         oiio.MATRIX44
-        oiio.TIMECODE
-        oiio.KEYCODE
         print "Passed AGGREGATE"
     except:
         print "Failed AGGREGATE"
@@ -60,6 +58,9 @@ def vecsemantics_enum_test():
         oiio.POINT
         oiio.VECTOR
         oiio.NORMAL
+        oiio.TIMECODE
+        oiio.KEYCODE
+        oiio.RATIONAL
         print "Passed VECSEMANTICS"
     except:
         print "Failed VECSEMANTICS"
@@ -128,7 +129,7 @@ try:
     print "equivalent(vector,float)", oiio.TypeDesc.equivalent(oiio.TypeDesc("vector"), oiio.TypeDesc("float"))
     print
 
-    # Test the static data member types of pre-constructed types
+    # DEPRECATED(1.8): Test the static data member types of pre-constructed types
     breakdown_test (oiio.TypeDesc.TypeFloat,    "TypeFloat",    verbose=False)
     breakdown_test (oiio.TypeDesc.TypeColor,    "TypeColor",    verbose=False)
     breakdown_test (oiio.TypeDesc.TypeString,   "TypeString",   verbose=False)
@@ -141,8 +142,35 @@ try:
     breakdown_test (oiio.TypeDesc.TypeMatrix44, "TypeMatrix44", verbose=False)
     breakdown_test (oiio.TypeDesc.TypeTimeCode, "TypeTimeCode", verbose=False)
     breakdown_test (oiio.TypeDesc.TypeKeyCode,  "TypeKeyCode",  verbose=False)
+    breakdown_test (oiio.TypeDesc.TypeRational, "TypeRational", verbose=False)
     breakdown_test (oiio.TypeDesc.TypeFloat4,   "TypeFloat4",   verbose=False)
     breakdown_test (oiio.TypeDesc.TypeHalf,     "TypeHalf",     verbose=False)
+    print
+
+    # Test the pre-constructed types
+    breakdown_test (oiio.TypeFloat,    "TypeFloat",    verbose=False)
+    breakdown_test (oiio.TypeColor,    "TypeColor",    verbose=False)
+    breakdown_test (oiio.TypeString,   "TypeString",   verbose=False)
+    breakdown_test (oiio.TypeInt,      "TypeInt",      verbose=False)
+    breakdown_test (oiio.TypeUInt,     "TypeUInt",     verbose=False)
+    breakdown_test (oiio.TypeInt32,    "TypeInt32",    verbose=False)
+    breakdown_test (oiio.TypeUInt32,   "TypeUInt32",   verbose=False)
+    breakdown_test (oiio.TypeInt16,    "TypeInt16",    verbose=False)
+    breakdown_test (oiio.TypeUInt16,   "TypeUInt16",   verbose=False)
+    breakdown_test (oiio.TypeInt8,     "TypeInt8",     verbose=False)
+    breakdown_test (oiio.TypeUInt8,    "TypeUInt8",    verbose=False)
+    breakdown_test (oiio.TypePoint,    "TypePoint",    verbose=False)
+    breakdown_test (oiio.TypeVector,   "TypeVector",   verbose=False)
+    breakdown_test (oiio.TypeNormal,   "TypeNormal",   verbose=False)
+    breakdown_test (oiio.TypeMatrix,   "TypeMatrix",   verbose=False)
+    breakdown_test (oiio.TypeMatrix33, "TypeMatrix33", verbose=False)
+    breakdown_test (oiio.TypeMatrix44, "TypeMatrix44", verbose=False)
+    breakdown_test (oiio.TypeTimeCode, "TypeTimeCode", verbose=False)
+    breakdown_test (oiio.TypeKeyCode,  "TypeKeyCode",  verbose=False)
+    breakdown_test (oiio.TypeFloat4,   "TypeFloat4",   verbose=False)
+    breakdown_test (oiio.TypeHalf,     "TypeHalf",     verbose=False)
+    breakdown_test (oiio.TypeRational, "TypeRational", verbose=False)
+    breakdown_test (oiio.TypeUInt,     "TypeUInt",     verbose=False)
     print
 
     print "Done."

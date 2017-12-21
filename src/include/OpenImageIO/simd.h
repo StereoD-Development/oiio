@@ -575,7 +575,8 @@ bool all (const vbool4& v);
 bool any (const vbool4& v);
 bool none (const vbool4& v);
 
-
+// It's handy to have this defined for regular bool as well
+inline bool all (bool v) { return v; }
 
 
 
@@ -2039,7 +2040,8 @@ vfloat4 abs (const vfloat4& a);    ///< absolute value (float)
 vfloat4 sign (const vfloat4& a);   ///< 1.0 when value >= 0, -1 when negative
 vfloat4 ceil (const vfloat4& a);
 vfloat4 floor (const vfloat4& a);
-vint4 floori (const vfloat4& a);    ///< (int)floor
+vint4 ifloor (const vfloat4& a);    ///< (int)floor
+inline vint4 floori (const vfloat4& a) { return ifloor(a); }  // DEPRECATED(1.8) alias
 
 /// Per-element round to nearest integer (rounding away from 0 in cases
 /// that are exactly half way).
@@ -2621,7 +2623,8 @@ vfloat8 abs (const vfloat8& a);    ///< absolute value (float)
 vfloat8 sign (const vfloat8& a);   ///< 1.0 when value >= 0, -1 when negative
 vfloat8 ceil (const vfloat8& a);
 vfloat8 floor (const vfloat8& a);
-vint8 floori (const vfloat8& a);    ///< (int)floor
+vint8 ifloor (const vfloat8& a);    ///< (int)floor
+inline vint8 floori (const vfloat8& a) { return ifloor(a); }  // DEPRECATED(1.8) alias
 
 /// Per-element round to nearest integer (rounding away from 0 in cases
 /// that are exactly half way).
@@ -2931,7 +2934,8 @@ vfloat16 abs (const vfloat16& a);    ///< absolute value (float)
 vfloat16 sign (const vfloat16& a);   ///< 1.0 when value >= 0, -1 when negative
 vfloat16 ceil (const vfloat16& a);
 vfloat16 floor (const vfloat16& a);
-vint16 floori (const vfloat16& a);    ///< (int)floor
+vint16 ifloor (const vfloat16& a);    ///< (int)floor
+inline vint16 floori (const vfloat16& a) { return ifloor(a); }  // DEPRECATED(1.8) alias
 
 /// Per-element round to nearest integer (rounding away from 0 in cases
 /// that are exactly half way).
@@ -4047,7 +4051,7 @@ OIIO_FORCEINLINE void vint4::load_mask (const vbool_t& mask, const value_t *valu
 
 OIIO_FORCEINLINE void vint4::store_mask (int mask, value_t *values) const {
 #if OIIO_SIMD_AVX >= 512 && OIIO_AVX512VL_ENABLED
-    _mm_mask_storeu_epi32 (__mmask8(mask), (const simd_t *)values);
+    _mm_mask_storeu_epi32 (values, __mmask8(mask), m_simd);
 #elif OIIO_SIMD_AVX >= 2
     _mm_maskstore_epi32 (values, _mm_castps_si128(vbool_t::from_bitmask(mask)), m_simd);
 #else
@@ -4058,7 +4062,7 @@ OIIO_FORCEINLINE void vint4::store_mask (int mask, value_t *values) const {
 
 OIIO_FORCEINLINE void vint4::store_mask (const vbool_t& mask, value_t *values) const {
 #if OIIO_SIMD_AVX >= 512 && OIIO_AVX512VL_ENABLED
-    _mm_mask_storeu_epi32 (__mmask8(mask), (const simd_t *)values);
+    _mm_mask_storeu_epi32 (values, mask.bitmask(), m_simd);
 #elif OIIO_SIMD_AVX >= 2
     _mm_maskstore_epi32 (values, _mm_castps_si128(mask), m_simd);
 #else
@@ -4106,7 +4110,7 @@ vint4::scatter_mask (const bool_t& mask, value_t *baseptr,
                      const vint_t& vindex) const
 {
 #if OIIO_SIMD_AVX >= 512 && OIIO_AVX512VL_ENABLED
-    _mm_mask_i32scatter_epi32 (baseptr, mask, vindex, m_simd, scale);
+    _mm_mask_i32scatter_epi32 (baseptr, mask.bitmask(), vindex, m_simd, scale);
 #else
     SIMD_DO (if (mask[i]) *(value_t *)((char *)baseptr + vindex[i]*scale) = m_val[i]);
 #endif
@@ -4816,7 +4820,7 @@ OIIO_FORCEINLINE void vint8::load_mask (const vbool8& mask, const int *values) {
 
 OIIO_FORCEINLINE void vint8::store_mask (int mask, int *values) const {
 #if OIIO_SIMD_AVX >= 512 && OIIO_AVX512VL_ENABLED
-    _mm256_mask_storeu_epi32 (__mmask8(mask), (const simd_t *)values);
+    _mm256_mask_storeu_epi32 (values, __mmask8(mask), m_simd);
 #elif OIIO_SIMD_AVX >= 2
     _mm256_maskstore_epi32 (values, _mm256_castps_si256(vbool8::from_bitmask(mask)), m_simd);
 #else
@@ -4827,7 +4831,7 @@ OIIO_FORCEINLINE void vint8::store_mask (int mask, int *values) const {
 
 OIIO_FORCEINLINE void vint8::store_mask (const vbool8& mask, int *values) const {
 #if OIIO_SIMD_AVX >= 512 && OIIO_AVX512VL_ENABLED
-    _mm256_mask_storeu_epi32 (__mmask8(mask), (const simd_t *)values);
+    _mm256_mask_storeu_epi32 (values, __mmask8(mask.bitmask()), m_simd);
 #elif OIIO_SIMD_AVX >= 2
     _mm256_maskstore_epi32 (values, _mm256_castps_si256(mask), m_simd);
 #else
@@ -4875,7 +4879,7 @@ vint8::scatter_mask (const bool_t& mask, value_t *baseptr,
                      const vint_t& vindex) const
 {
 #if OIIO_SIMD_AVX >= 512 && OIIO_AVX512VL_ENABLED
-    _mm256_mask_i32scatter_epi32 (baseptr, mask, vindex, m_simd, scale);
+    _mm256_mask_i32scatter_epi32 (baseptr, mask.bitmask(), vindex, m_simd, scale);
 #else
     SIMD_DO (if (mask[i]) *(value_t *)((char *)baseptr + vindex[i]*scale) = m_val[i]);
 #endif
@@ -6488,7 +6492,7 @@ OIIO_FORCEINLINE void vfloat4::load_mask (const vbool_t& mask, const float *valu
 
 OIIO_FORCEINLINE void vfloat4::store_mask (int mask, float *values) const {
 #if OIIO_SIMD_AVX >= 512 && OIIO_AVX512VL_ENABLED
-    m_simd = _mm_mask_storeu_ps (__mmask8(mask), (const simd_t *)values);
+    _mm_mask_storeu_ps (values, __mmask8(mask), m_simd);
 #elif OIIO_SIMD_AVX
     // Concern: is this really faster?
     _mm_maskstore_ps (values, _mm_castps_si128(vbool_t::from_bitmask(mask)), m_simd);
@@ -6500,7 +6504,7 @@ OIIO_FORCEINLINE void vfloat4::store_mask (int mask, float *values) const {
 
 OIIO_FORCEINLINE void vfloat4::store_mask (const vbool_t& mask, float *values) const {
 #if OIIO_SIMD_AVX >= 512 && OIIO_AVX512VL_ENABLED
-    m_simd = _mm_mask_storeu_ps (__mmask8(mask.bitmask()), (const simd_t *)values);
+    _mm_mask_storeu_ps (values, __mmask8(mask.bitmask()), m_simd);
 #elif OIIO_SIMD_AVX
     // Concern: is this really faster?
     _mm_maskstore_ps (values, _mm_castps_si128(mask.simd()), m_simd);
@@ -6549,7 +6553,7 @@ vfloat4::scatter_mask (const bool_t& mask, value_t *baseptr,
                        const vint_t& vindex) const
 {
 #if OIIO_SIMD_AVX >= 512 && OIIO_AVX512VL_ENABLED
-    _mm_mask_i32scatter_ps (baseptr, mask, vindex, m_simd, scale);
+    _mm_mask_i32scatter_ps (baseptr, mask.bitmask(), vindex, m_simd, scale);
 #else
     SIMD_DO (if (mask[i]) *(value_t *)((char *)baseptr + vindex[i]*scale) = m_val[i]);
 #endif
@@ -7048,18 +7052,11 @@ OIIO_FORCEINLINE vfloat4 round (const vfloat4& a)
 #endif
 }
 
-OIIO_FORCEINLINE vint4 floori (const vfloat4& a)
+OIIO_FORCEINLINE vint4 ifloor (const vfloat4& a)
 {
     // FIXME: look into this, versus the method of quick_floor in texturesys.cpp
 #if OIIO_SIMD_SSE >= 4  /* SSE >= 4.1 */
     return vint4(floor(a));
-#elif OIIO_SIMD_SSE   /* SSE2/3 */
-    vint4 i (a);  // truncates
-    vint4 isneg = bitcast_to_int (a < vfloat4::Zero());
-    return i + isneg;
-    // The trick here (thanks, Cycles, for letting me spy on your code) is
-    // that the comparison will return (int)-1 for components that are less
-    // than zero, and adding that is the same as subtracting one!
 #else
     SIMD_RETURN (vint4, (int)floorf(a[i]));
 #endif
@@ -8165,7 +8162,7 @@ OIIO_FORCEINLINE void vfloat8::load_mask (const vbool8& mask, const float *value
 
 OIIO_FORCEINLINE void vfloat8::store_mask (int mask, float *values) const {
 #if OIIO_SIMD_AVX >= 512 && OIIO_AVX512VL_ENABLED
-    m_simd = _mm256_mask_storeu_ps (__mmask8(mask), (const simd_t *)values);
+    _mm256_mask_storeu_ps (values, __mmask8(mask), m_simd);
 #elif OIIO_SIMD_AVX
     // Concern: is this really faster?
     _mm256_maskstore_ps (values, _mm256_castps_si256(vbool8::from_bitmask(mask)), m_simd);
@@ -8177,7 +8174,7 @@ OIIO_FORCEINLINE void vfloat8::store_mask (int mask, float *values) const {
 
 OIIO_FORCEINLINE void vfloat8::store_mask (const vbool8& mask, float *values) const {
 #if OIIO_SIMD_AVX >= 512 && OIIO_AVX512VL_ENABLED
-    m_simd = _mm256_mask_storeu_ps (__mmask8(mask.bitmask()), (const simd_t *)values);
+    _mm256_mask_storeu_ps (values, __mmask8(mask.bitmask()), m_simd);
 #elif OIIO_SIMD_AVX
     // Concern: is this really faster?
     _mm256_maskstore_ps (values, _mm256_castps_si256(mask.simd()), m_simd);
@@ -8226,7 +8223,7 @@ vfloat8::scatter_mask (const bool_t& mask, value_t *baseptr,
                        const vint_t& vindex) const
 {
 #if OIIO_SIMD_AVX >= 512 && OIIO_AVX512VL_ENABLED
-    _mm256_mask_i32scatter_ps (baseptr, mask, vindex, m_simd, scale);
+    _mm256_mask_i32scatter_ps (baseptr, mask.bitmask(), vindex, m_simd, scale);
 #else
     SIMD_DO (if (mask[i]) *(value_t *)((char *)baseptr + vindex[i]*scale) = m_val[i]);
 #endif
@@ -8548,18 +8545,13 @@ OIIO_FORCEINLINE vfloat8 round (const vfloat8& a)
 #endif
 }
 
-OIIO_FORCEINLINE vint8 floori (const vfloat8& a)
+OIIO_FORCEINLINE vint8 ifloor (const vfloat8& a)
 {
     // FIXME: look into this, versus the method of quick_floor in texturesys.cpp
 #if OIIO_SIMD_AVX
     return vint8(floor(a));
 #elif OIIO_SIMD_SSE   /* SSE2/3 */
-    vint8 i (a);  // truncates
-    vint8 isneg = bitcast_to_int (a < vfloat8::Zero());
-    return i + isneg;
-    // The trick here (thanks, Cycles, for letting me spy on your code) is
-    // that the comparison will return (int)-1 for components that are less
-    // than zero, and adding that is the same as subtracting one!
+    return vint8 (ifloor(a.lo()), ifloor(a.hi()));
 #else
     SIMD_RETURN (vint8, (int)floorf(a[i]));
 #endif
@@ -9384,7 +9376,7 @@ OIIO_FORCEINLINE vfloat16 round (const vfloat16& a)
 #endif
 }
 
-OIIO_FORCEINLINE vint16 floori (const vfloat16& a)
+OIIO_FORCEINLINE vint16 ifloor (const vfloat16& a)
 {
 #if OIIO_SIMD_AVX >= 512
     return _mm512_cvt_roundps_epi32 (a, (_MM_FROUND_TO_NEG_INF |_MM_FROUND_NO_EXC));

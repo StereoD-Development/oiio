@@ -28,21 +28,28 @@ if (NOT MSVC)
                              PROPERTIES COMPILE_FLAGS "-Wno-deprecated-declarations")
 endif()
 
-list (APPEND libOpenImageIO_srcs
-                          deepdata.cpp exif.cpp formatspec.cpp imagebuf.cpp
-                          imageinput.cpp imageio.cpp imageioplugin.cpp
-                          imageoutput.cpp iptc.cpp xmp.cpp
-                          color_ocio.cpp
+set (libOpenImageIO_srcs
                           imagebufalgo.cpp
+                          imagebufalgo_pixelmath.cpp
+                          imagebufalgo_channels.cpp
                           imagebufalgo_compare.cpp
                           imagebufalgo_copy.cpp
                           imagebufalgo_deep.cpp
                           imagebufalgo_draw.cpp
-                          imagebufalgo_pixelmath.cpp
+                          imagebufalgo_addsub.cpp
+                          imagebufalgo_muldiv.cpp
+                          imagebufalgo_mad.cpp
+                          imagebufalgo_orient.cpp
                           imagebufalgo_xform.cpp
                           imagebufalgo_yee.cpp imagebufalgo_opencv.cpp
+                          deepdata.cpp exif.cpp exif-canon.cpp
+                          formatspec.cpp imagebuf.cpp
+                          imageinput.cpp imageio.cpp imageioplugin.cpp
+                          imageoutput.cpp iptc.cpp xmp.cpp
+                          color_ocio.cpp
                           maketexture.cpp
                           ../libutil/argparse.cpp
+                          ../libutil/benchmark.cpp
                           ../libutil/errorhandler.cpp 
                           ../libutil/filesystem.cpp 
                           ../libutil/stream.cpp 
@@ -64,6 +71,7 @@ list (APPEND libOpenImageIO_srcs
                           ../libtexture/environment.cpp 
                           ../libtexture/texoptions.cpp 
                           ../libtexture/imagecache.cpp
+                          ${libOpenImageIO_srcs}
                           ${libOpenImageIO_hdrs}
                          )
 
@@ -110,6 +118,7 @@ target_link_libraries (OpenImageIO
                        ${format_plugin_libs} # Add all the target link libraries from the plugins
                        ${Boost_LIBRARIES})
 
+include_directories (${ROBINMAP_INCLUDE_DIR})
 
 # Include OpenColorIO if using it
 if (USE_OCIO AND OCIO_FOUND)
@@ -146,12 +155,17 @@ if (GDCM_FOUND)
 endif ()
 
 
+if (MSVC)
+    set_property (SOURCE imagebufalgo_pixelmath.cpp APPEND_STRING PROPERTY COMPILE_FLAGS " /bigobj ")
+endif ()
 
 if (WIN32)
     target_link_libraries (OpenImageIO psapi.lib)
 endif ()
 
-add_dependencies (OpenImageIO "${VISIBILITY_MAP_FILE}")
+if (VISIBILITY_MAP_FILE)
+    add_dependencies (OpenImageIO "${VISIBILITY_MAP_FILE}")
+endif ()
 
 if (USE_EXTERNAL_PUGIXML)
     target_link_libraries (OpenImageIO ${PUGIXML_LIBRARIES})

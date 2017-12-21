@@ -215,7 +215,7 @@ debug (string_view message)
 bool
 attribute (string_view name, TypeDesc type, const void *val)
 {
-    if (name == "threads" && type == TypeDesc::TypeInt) {
+    if (name == "threads" && type == TypeInt) {
         int ot = Imath::clamp (*(const int *)val, 0, maxthreads);
         if (ot == 0)
             ot = threads_default();
@@ -224,23 +224,23 @@ attribute (string_view name, TypeDesc type, const void *val)
         return true;
     }
     spin_lock lock (attrib_mutex);
-    if (name == "read_chunk" && type == TypeDesc::TypeInt) {
+    if (name == "read_chunk" && type == TypeInt) {
         oiio_read_chunk = *(const int *)val;
         return true;
     }
-    if (name == "plugin_searchpath" && type == TypeDesc::TypeString) {
+    if (name == "plugin_searchpath" && type == TypeString) {
         plugin_searchpath = ustring (*(const char **)val);
         return true;
     }
-    if (name == "exr_threads" && type == TypeDesc::TypeInt) {
+    if (name == "exr_threads" && type == TypeInt) {
         oiio_exr_threads = Imath::clamp (*(const int *)val, -1, maxthreads);
         return true;
     }
-    if (name == "tiff:half" && type == TypeDesc::TypeInt) {
+    if (name == "tiff:half" && type == TypeInt) {
         tiff_half = *(const int *)val;
         return true;
     }
-    if (name == "debug" && type == TypeDesc::TypeInt) {
+    if (name == "debug" && type == TypeInt) {
         print_debug = *(const int *)val;
         return true;
     }
@@ -252,66 +252,66 @@ attribute (string_view name, TypeDesc type, const void *val)
 bool
 getattribute (string_view name, TypeDesc type, void *val)
 {
-    if (name == "threads" && type == TypeDesc::TypeInt) {
+    if (name == "threads" && type == TypeInt) {
         *(int *)val = oiio_threads;
         return true;
     }
     spin_lock lock (attrib_mutex);
-    if (name == "read_chunk" && type == TypeDesc::TypeInt) {
+    if (name == "read_chunk" && type == TypeInt) {
         *(int *)val = oiio_read_chunk;
         return true;
     }
-    if (name == "plugin_searchpath" && type == TypeDesc::TypeString) {
+    if (name == "plugin_searchpath" && type == TypeString) {
         *(ustring *)val = plugin_searchpath;
         return true;
     }
-    if (name == "format_list" && type == TypeDesc::TypeString) {
+    if (name == "format_list" && type == TypeString) {
         if (format_list.empty())
             pvt::catalog_all_plugins (plugin_searchpath.string());
         *(ustring *)val = ustring(format_list);
         return true;
     }
-    if (name == "input_format_list" && type == TypeDesc::TypeString) {
+    if (name == "input_format_list" && type == TypeString) {
         if (input_format_list.empty())
             pvt::catalog_all_plugins (plugin_searchpath.string());
         *(ustring *)val = ustring(input_format_list);
         return true;
     }
-    if (name == "output_format_list" && type == TypeDesc::TypeString) {
+    if (name == "output_format_list" && type == TypeString) {
         if (output_format_list.empty())
             pvt::catalog_all_plugins (plugin_searchpath.string());
         *(ustring *)val = ustring(output_format_list);
         return true;
     }
-    if (name == "extension_list" && type == TypeDesc::TypeString) {
+    if (name == "extension_list" && type == TypeString) {
         if (extension_list.empty())
             pvt::catalog_all_plugins (plugin_searchpath.string());
         *(ustring *)val = ustring(extension_list);
         return true;
     }
-    if (name == "library_list" && type == TypeDesc::TypeString) {
+    if (name == "library_list" && type == TypeString) {
         if (library_list.empty())
             pvt::catalog_all_plugins (plugin_searchpath.string());
         *(ustring *)val = ustring(library_list);
         return true;
     }
-    if (name == "exr_threads" && type == TypeDesc::TypeInt) {
+    if (name == "exr_threads" && type == TypeInt) {
         *(int *)val = oiio_exr_threads;
         return true;
     }
-    if (name == "tiff:half" && type == TypeDesc::TypeInt) {
+    if (name == "tiff:half" && type == TypeInt) {
         *(int *)val = tiff_half;
         return true;
     }
-    if (name == "debug" && type == TypeDesc::TypeInt) {
+    if (name == "debug" && type == TypeInt) {
         *(int *)val = print_debug;
         return true;
     }
-    if (name == "hw:simd" && type == TypeDesc::TypeString) {
+    if (name == "hw:simd" && type == TypeString) {
         *(ustring *)val = ustring(hw_simd_caps());
         return true;
     }
-    if (name == "oiio:simd" && type == TypeDesc::TypeString) {
+    if (name == "oiio:simd" && type == TypeString) {
         *(ustring *)val = ustring(oiio_simd_caps());
         return true;
     }
@@ -464,9 +464,8 @@ pvt::convert_to_float (const void *src, float *dst, int nvals,
 
 
 template<typename T>
-const void *
-_from_float (const float *src, T *dst, size_t nvals,
-             long long quant_min, long long quant_max)
+static const void *
+_from_float (const float *src, T *dst, size_t nvals)
 {
     if (! src) {
         // If no source pixels, assume zeroes
@@ -474,6 +473,8 @@ _from_float (const float *src, T *dst, size_t nvals,
         for (size_t p = 0;  p < nvals;  ++p)
             dst[p] = z;
     } else if (std::numeric_limits <T>::is_integer) {
+        long long quant_min = (long long) std::numeric_limits <T>::min();
+        long long quant_max = (long long) std::numeric_limits <T>::max();
         // Convert float to non-float native format, with quantization
         for (size_t p = 0;  p < nvals;  ++p)
             dst[p] = (T) quantize (src[p], quant_min, quant_max);
@@ -495,42 +496,31 @@ _from_float (const float *src, T *dst, size_t nvals,
 
 
 const void *
-pvt::convert_from_float (const float *src, void *dst, size_t nvals,
-                         long long quant_min, long long quant_max, TypeDesc format)
+pvt::convert_from_float (const float *src, void *dst, size_t nvals, TypeDesc format)
 {
     switch (format.basetype) {
     case TypeDesc::FLOAT :
         return src;
     case TypeDesc::HALF :
-        return _from_float<half> (src, (half *)dst, nvals,
-                                  quant_min, quant_max);
+        return _from_float<half> (src, (half *)dst, nvals);
     case TypeDesc::DOUBLE :
-        return _from_float (src, (double *)dst, nvals,
-                            quant_min, quant_max);
+        return _from_float (src, (double *)dst, nvals);
     case TypeDesc::INT8:
-        return _from_float (src, (char *)dst, nvals,
-                            quant_min, quant_max);
+        return _from_float (src, (char *)dst, nvals);
     case TypeDesc::UINT8 :
-        return _from_float (src, (unsigned char *)dst, nvals,
-                            quant_min, quant_max);
+        return _from_float (src, (unsigned char *)dst, nvals);
     case TypeDesc::INT16 :
-        return _from_float (src, (short *)dst, nvals,
-                            quant_min, quant_max);
+        return _from_float (src, (short *)dst, nvals);
     case TypeDesc::UINT16 :
-        return _from_float (src, (unsigned short *)dst, nvals,
-                            quant_min, quant_max);
+        return _from_float (src, (unsigned short *)dst, nvals);
     case TypeDesc::INT :
-        return _from_float (src, (int *)dst, nvals,
-                            quant_min, quant_max);
+        return _from_float (src, (int *)dst, nvals);
     case TypeDesc::UINT :
-        return _from_float (src, (unsigned int *)dst, nvals,
-                            quant_min, quant_max);
+        return _from_float (src, (unsigned int *)dst, nvals);
     case TypeDesc::INT64 :
-        return _from_float (src, (long long *)dst, nvals,
-                            quant_min, quant_max);
+        return _from_float (src, (long long *)dst, nvals);
     case TypeDesc::UINT64 :
-        return _from_float (src, (unsigned long long *)dst, nvals,
-                            quant_min, quant_max);
+        return _from_float (src, (unsigned long long *)dst, nvals);
     default:
         ASSERT (0 && "ERROR from_float: bad format");
         return NULL;
@@ -545,13 +535,8 @@ pvt::parallel_convert_from_float (const float *src, void *dst, size_t nvals,
     if (format.basetype == TypeDesc::FLOAT)
         return src;
 
-    const int64_t blocksize = 100000;   // good choice?
-    long long quant_min, quant_max;
-    get_default_quantize (format, quant_min, quant_max);
-
-    parallel_for_chunked (0, int64_t(nvals), blocksize, [=](int64_t b, int64_t e){
-        convert_from_float (src+b, (char *)dst+b*format.size(),
-                            e-b, quant_min, quant_max, format);
+    parallel_for_chunked (0, int64_t(nvals), 0, [=](int64_t b, int64_t e){
+        convert_from_float (src+b, (char *)dst+b*format.size(), e-b, format);
     });
     return dst;
 }
@@ -568,7 +553,7 @@ convert_types (TypeDesc src_type, const void *src,
         return true;
     }
 
-    if (dst_type == TypeDesc::TypeFloat) {
+    if (dst_type == TypeFloat) {
         // Special case -- converting non-float to float
         pvt::convert_to_float (src, (float *)dst, n, src_type);
         return true;
@@ -578,7 +563,7 @@ convert_types (TypeDesc src_type, const void *src,
 
     std::unique_ptr<float[]> tmp;   // In case we need a lot of temp space
     float *buf = (float *)src;
-    if (src_type != TypeDesc::TypeFloat) {
+    if (src_type != TypeFloat) {
         // If src is also not float, convert through an intermediate buffer
         if (n <= 4096)  // If < 16k, use the stack
             buf = ALLOCA (float, n);

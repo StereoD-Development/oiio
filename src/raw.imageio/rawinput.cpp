@@ -28,11 +28,15 @@
   (This is the Modified BSD License)
 */
 
+#include <algorithm>
+#include <iostream>
+#include <ctime>       /* time_t, struct tm, gmtime */
+
 #include <OpenImageIO/imageio.h>
 #include <OpenImageIO/fmath.h>
 #include <OpenImageIO/strutil.h>
-#include <iostream>
-#include <ctime>       /* time_t, struct tm, gmtime */
+#include <OpenImageIO/tiffutils.h>
+
 #include <libraw/libraw.h>
 #include <libraw/libraw_version.h>
 
@@ -46,7 +50,7 @@ OIIO_PLUGIN_NAMESPACE_BEGIN
 
 class RawInput final : public ImageInput {
 public:
-    RawInput () : m_process(true), m_image(NULL) {}
+    RawInput () : m_process(true), m_unpacked(false), m_image(NULL) {}
     virtual ~RawInput() { close(); }
     virtual const char * format_name (void) const { return "raw"; }
     virtual int supports (string_view feature) const {
@@ -62,10 +66,12 @@ public:
 private:
     bool process();
     bool m_process;
+    bool m_unpacked = false;
     LibRaw m_processor;
     libraw_processed_image_t *m_image;
+    std::string m_filename;
 
-    void read_tiff_metadata (const std::string &filename);
+    bool do_unpack();
 };
 
 
@@ -103,31 +109,123 @@ RawInput::open (const std::string &name, ImageSpec &newspec)
 
 
 
+static void
+exif_parser_cb (ImageSpec* spec, int tag, int tifftype, int len,
+                unsigned int byteorder, LibRaw_abstract_datastream* ifp)
+{
+    // Oy, the data offsets are all going to be relative to the start of the
+    // stream, not relative to our current position and data block. So we
+    // need to remember that offset and pass its negative as the
+    // offset_adjustment to the handler.
+    size_t streampos = ifp->tell();
+    // std::cerr << "Stream position " << streampos << "\n";
+
+    TypeDesc type = tiff_datatype_to_typedesc (TIFFDataType(tifftype), size_t(len));
+    const TagInfo* taginfo = tag_lookup ("Exif", tag);
+    if (! taginfo) {
+        // Strutil::fprintf (std::cerr, "NO TAGINFO FOR CALLBACK tag=%d (0x%x): tifftype=%d,len=%d (%s), byteorder=0x%x\n",
+        //                   tag, tag, tifftype, len, type, byteorder);
+        return;
+    }
+    if (type.size() >= (1<<20))
+        return;   // sanity check -- too much memory
+    size_t size = tiff_data_size(TIFFDataType(tifftype)) * len;
+    std::vector<unsigned char> buf (size);
+    ifp->read (buf.data(), size, 1);
+
+    // debug scaffolding
+    // Strutil::fprintf (std::cerr, "CALLBACK tag=%s: tifftype=%d,len=%d (%s), byteorder=0x%x\n",
+    //                   taginfo->name, tifftype, len, type, byteorder);
+    // for (int i = 0; i < std::min(16UL,size); ++i) {
+    //     if (buf[i] >= ' ' && buf[i] < 128)
+    //         std::cerr << char(buf[i]);
+    //     Strutil::fprintf (std::cerr, "(%d) ", int(buf[i]));
+    // }
+    // std::cerr << "\n";
+
+    bool swab = (littleendian() != (byteorder == 0x4949));
+    if (swab) {
+        if (type.basetype == TypeDesc::UINT16)
+            swap_endian ((uint16_t *)buf.data(), len);
+        if (type.basetype == TypeDesc::UINT32)
+            swap_endian ((uint32_t *)buf.data(), len);
+    }
+
+    if (taginfo->handler) {
+        TIFFDirEntry dir;
+        dir.tdir_tag = uint16_t(tag);
+        dir.tdir_type = uint16_t(tifftype);
+        dir.tdir_count = uint32_t(len);
+        dir.tdir_offset = 0;
+        taginfo->handler (*taginfo, dir, buf, *spec, swab, -int(streampos));
+        // std::cerr << "HANDLED " << taginfo->name << "\n";
+        return;
+    }
+    if (taginfo->tifftype == TIFF_NOTYPE)
+        return;   // skip
+    if (tifftype == TIFF_RATIONAL || tifftype == TIFF_SRATIONAL) {
+        spec->attribute (taginfo->name, type, buf.data());
+        return;
+    }
+    if (type.basetype == TypeDesc::UINT16) {
+        spec->attribute (taginfo->name, type, buf.data());
+        return;
+    }
+    if (type.basetype == TypeDesc::UINT32) {
+        spec->attribute (taginfo->name, type, buf.data());
+        return;
+    }
+    if (type == TypeString) {
+        spec->attribute (taginfo->name, string_view((char*)buf.data(), size));
+        return;
+    }
+    // Strutil::fprintf (std::cerr, "RAW metadata NOT HANDLED: tag=%s: tifftype=%d,len=%d (%s), byteorder=0x%x\n",
+    //                   taginfo->name, tifftype, len, type, byteorder);
+}
+
+
+
 bool
 RawInput::open (const std::string &name, ImageSpec &newspec,
                 const ImageSpec &config)
 {
     int ret;
 
+    // Temp spec for exif parser callback to dump into
+    ImageSpec exifspec;
+#if LIBRAW_VERSION >= LIBRAW_MAKE_VERSION(0,17,0)
+    m_processor.set_exifparser_handler ((exif_parser_callback)exif_parser_cb,
+                                        &exifspec);
+#endif
+
     // open the image
+    m_filename = name;
     if ( (ret = m_processor.open_file(name.c_str()) ) != LIBRAW_SUCCESS) {
         error ("Could not open file \"%s\", %s", name.c_str(), libraw_strerror(ret));
         return false;
     }
 
-    if ( (ret = m_processor.unpack() ) != LIBRAW_SUCCESS) {
-        error ("Could not unpack \"%s\", %s",name.c_str(), libraw_strerror(ret));
+#if 0
+    // We used to unpack here, but that is needlessly expensive for an app
+    // that is only opening the file to read the metadata. So we now do it
+    // upon the first scanline read.
+
+    // We also no longer call adjust_sizes_info_only(), I think that doesn't
+    // hurt us in any practical sense, but be on the lookout for trouble.
+    if (! do_unpack())
         return false;
-    }
 
     // Forcing the Libraw to adjust sizes based on the capture device orientation
     m_processor.adjust_sizes_info_only();
- 
+#endif
+
     // Set file information
     m_spec = ImageSpec(m_processor.imgdata.sizes.iwidth,
                        m_processor.imgdata.sizes.iheight,
                        3, // LibRaw should only give us 3 channels
                        TypeDesc::UINT16);
+    // Move the exif attribs we already read into the spec we care about
+    m_spec.extra_attribs.swap (exifspec.extra_attribs);
 
     // Output 16 bit images
     m_processor.imgdata.params.output_bps = 16;
@@ -322,39 +420,9 @@ RawInput::open (const std::string &name, ImageSpec &newspec,
 
     // FIXME -- thumbnail possibly in m_processor.imgdata.thumbnail
 
-    read_tiff_metadata (name);
-
     // Copy the spec to return to the user
     newspec = m_spec;
     return true;
-}
-
-
-
-void
-RawInput::read_tiff_metadata (const std::string &filename)
-{
-    // Many of these raw formats look just like TIFF files, and we can use
-    // that to extract a bunch of extra Exif metadata and thumbnail.
-    ImageInput *in = ImageInput::create ("tiff");
-    if (! in) {
-        (void) OIIO::geterror();  // eat the error
-        return;
-    }
-    ImageSpec newspec;
-    bool ok = in->open (filename, newspec);
-    if (ok) {
-        // Transfer "Exif:" metadata to the raw spec.
-        for (ParamValueList::const_iterator p = newspec.extra_attribs.begin();
-             p != newspec.extra_attribs.end();  ++p) {
-            if (Strutil::istarts_with (p->name().c_str(), "Exif:")) {
-                m_spec.attribute (p->name().c_str(), p->type(), p->data());
-            }
-        }
-    }
-
-    in->close ();
-    delete in;
 }
 
 
@@ -365,7 +433,25 @@ RawInput::close()
     if (m_image) {
         LibRaw::dcraw_clear_mem(m_image);
         m_image = NULL;
+        m_unpacked = false;
+        m_process = true;
     }
+    return true;
+}
+
+
+
+bool
+RawInput::do_unpack ()
+{
+    if (m_unpacked)
+        return true;
+    int ret;
+    if ( (ret = m_processor.unpack() ) != LIBRAW_SUCCESS) {
+        error ("Could not unpack \"%s\", %s", m_filename, libraw_strerror(ret));
+        return false;
+    }
+    m_unpacked = true;
     return true;
 }
 
@@ -408,6 +494,9 @@ RawInput::read_native_scanline (int y, int z, void *data)
 {
     if (y < 0 || y >= m_spec.height) // out of range scanline
         return false;
+
+    if (! m_unpacked)
+        do_unpack ();
 
     if (! m_process) {
         // The user has selected not to apply any debayering.

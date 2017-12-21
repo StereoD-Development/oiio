@@ -68,6 +68,7 @@
 # include <Psapi.h>
 # include <cstdio>
 # include <io.h>
+# include <malloc.h>
 #else
 # include <sys/resource.h>
 #endif
@@ -376,9 +377,8 @@ bool enableVTMode()
     }
     return true;
 }
-#else
-bool enableVTMode() { return true; }
 #endif
+
 
 
 Term::Term (const std::ostream &stream)
@@ -386,8 +386,33 @@ Term::Term (const std::ostream &stream)
     m_is_console = (&stream == &std::cout && isatty(fileno(stdout)))
                 || (&stream == &std::cerr && isatty(fileno(stderr)))
                 || (&stream == &std::clog && isatty(fileno(stderr)));
-    if (is_console())
+
+#ifdef _WIN32
+    if (m_is_console)
         enableVTMode();
+#else
+    // Non-windows: also check the TERM env variable for a terminal known to
+    // be capable of the color codes. List copied from the Apache-licensed
+    // Google Benchmark: https://github.com/google/benchmark/blob/master/src/colorprint.cc
+    const char* const supported_terminals[] = {
+        "cygwin", "linux", "rxvt-unicode", "rxvt-unicode-256color",
+        "screen", "screen-256color", "tmux", "tmux-256color",
+        "xterm", "xterm-256color", "xterm-color"
+    };
+    string_view TERM = Sysutil::getenv ("TERM");
+    bool term_supports_color = false;
+    for (auto t : supported_terminals)
+        term_supports_color |= (TERM == t);
+    m_is_console &= term_supports_color;
+    // FIXME/NOTE: It's possible that this will fail to print color for some
+    // terminal emulator omitted from the list. Will Rosecrans suggests
+    // using the shell command 'tput colors' for a more authoritative
+    // answer. LG isn't sure under what conditions that might break and
+    // doesn't have time to look into it further at this time.
+    // https://github.com/OpenImageIO/oiio/pull/1752
+    // Some day we should return to this if we come to rely more heavily on
+    // this console coloring as a core feature.
+#endif
 }
 
 
@@ -557,5 +582,23 @@ Sysutil::max_open_files ()
 #endif
     return size_t(-1); // Couldn't figure out, so return effectively infinity
 }
+
+void* aligned_malloc(std::size_t size, std::size_t align) {
+#if defined(_WIN32)
+    return _aligned_malloc(size, align);
+#else
+    void* ptr;
+    return posix_memalign(&ptr, align, size) == 0 ? ptr : nullptr;
+#endif
+}
+
+void aligned_free(void* ptr) {
+#if defined(_WIN32)
+    _aligned_free(ptr);
+#else
+    free(ptr);
+#endif
+}
+
 
 OIIO_NAMESPACE_END
