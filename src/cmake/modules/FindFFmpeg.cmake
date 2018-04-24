@@ -37,22 +37,22 @@ else (FFMPEG_LIBRARIES AND FFMPEG_INCLUDE_DIR)
   )
 
   find_library(FFMPEG_LIBAVCODEC
-    NAMES avcodec
+    NAMES libavcodec.so avcodec
     PATHS ${_FFMPEG_AVCODEC_LIBRARY_DIRS} /usr/lib /usr/local/lib /opt/local/lib /sw/lib
   )
 
   find_library(FFMPEG_LIBAVFORMAT
-    NAMES avformat
+    NAMES libavformat.so avformat
     PATHS ${_FFMPEG_AVFORMAT_LIBRARY_DIRS} /usr/lib /usr/local/lib /opt/local/lib /sw/lib
   )
 
   find_library(FFMPEG_LIBAVUTIL
-    NAMES avutil
+    NAMES libavutil.so avutil
     PATHS ${_FFMPEG_AVUTIL_LIBRARY_DIRS} /usr/lib /usr/local/lib /opt/local/lib /sw/lib
   )
 
   find_library(FFMPEG_LIBSWSCALE
-    NAMES swscale
+    NAMES libswscale.so swscale
     PATHS ${_FFMPEG_SWSCALE_LIBRARY_DIRS} /usr/lib /usr/local/lib /opt/local/lib /sw/lib
   )
 

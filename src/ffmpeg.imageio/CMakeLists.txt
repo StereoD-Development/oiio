@@ -9,9 +9,10 @@ if (NOT MSVC)
         libffmpeg/ffmpegoiiobase.h
         libffmpeg/ffmpegcontroller.h
         PROPERTIES COMPILE_FLAGS "-Wno-deprecated-declarations")
+
     set_source_files_properties (
         libffmpeg/ffmpegoiiobase.h
-        PROPERTIES COMPILE_FLAGS "-Wno-unused-function")
+        PROPERTIES COMPILE_FLAGS "-Wno-unused-function -Wno-deprecated-declarations")
 endif()
 
 if (USE_FFMPEG AND FFMPEG_FOUND)
