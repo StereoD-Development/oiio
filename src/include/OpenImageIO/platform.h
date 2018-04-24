@@ -41,25 +41,10 @@
 #include <utility> // std::forward
 
 // Make sure all platforms have the explicit sized integer types
-#if defined(_MSC_VER) && _MSC_VER < 1600
-   typedef __int8  int8_t;
-   typedef __int16 int16_t;
-   typedef __int32 int32_t;
-   typedef __int64 int64_t;
-   typedef unsigned __int8  uint8_t;
-   typedef unsigned __int16 uint16_t;
-# ifndef _UINT64_T
-   typedef unsigned __int32 uint32_t;
-   typedef unsigned __int64 uint64_t;
-#  define _UINT32_T
-#  define _UINT64_T
-# endif
-#else
-#  ifndef __STDC_LIMIT_MACROS
-#    define __STDC_LIMIT_MACROS  /* needed for some defs in stdint.h */
-#  endif
-#  include <cstdint>
+#ifndef __STDC_LIMIT_MACROS
+#  define __STDC_LIMIT_MACROS  /* needed for some defs in stdint.h */
 #endif
+#include <cstdint>
 
 #if defined(__FreeBSD__)
 #include <sys/param.h>
@@ -174,15 +159,22 @@
 
 // Tests for MSVS versions, always 0 if not MSVS at all.
 #if defined(_MSC_VER)
+#  if _MSC_VER < 1800
+#    error "This version of OIIO is meant to work only with Visual Studio 2013 or later"
+#  endif
 #  define OIIO_MSVS_AT_LEAST_2013 (_MSC_VER >= 1800)
 #  define OIIO_MSVS_BEFORE_2013   (_MSC_VER <  1800)
 #  define OIIO_MSVS_AT_LEAST_2015 (_MSC_VER >= 1900)
 #  define OIIO_MSVS_BEFORE_2015   (_MSC_VER <  1900)
+#  define OIIO_MSVS_AT_LEAST_2017 (_MSC_VER >= 1910)
+#  define OIIO_MSVS_BEFORE_2017   (_MSC_VER <  1910)
 #else
 #  define OIIO_MSVS_AT_LEAST_2013 0
 #  define OIIO_MSVS_BEFORE_2013   0
 #  define OIIO_MSVS_AT_LEAST_2015 0
 #  define OIIO_MSVS_BEFORE_2015   0
+#  define OIIO_MSVS_AT_LEAST_2017 0
+#  define OIIO_MSVS_BEFORE_2017   0
 #endif
 
 
@@ -194,8 +186,8 @@
 
 
 // Define a macro that can be used for memory alignment.
-// I think that in a future world of C++1x compatibility, all these can
-// be replaced with [[ align(size) ]].
+// This macro is mostly obsolete and C++11 alignas() should be preferred
+// for new code.
 #if defined (__GNUC__) || __has_attribute(aligned)
 #  define OIIO_ALIGN(size) __attribute__((aligned(size)))
 #elif defined (_MSC_VER)
@@ -238,7 +230,9 @@
 // always inline. On many compilers regular 'inline' is only advisory. Put
 // this attribute before the function return type, just like you would use
 // 'inline'.
-#if defined(__GNUC__) || defined(__clang__) || __has_attribute(always_inline)
+#if defined(__CUDACC__)
+#  define OIIO_FORCEINLINE __inline__
+#elif defined(__GNUC__) || defined(__clang__) || __has_attribute(always_inline)
 #  define OIIO_FORCEINLINE inline __attribute__((always_inline))
 #elif defined(_MSC_VER) || defined(__INTEL_COMPILER)
 #  define OIIO_FORCEINLINE __forceinline
@@ -323,6 +317,15 @@
 #    define __LITTLE_ENDIAN__ 1
 #    undef __BIG_ENDIAN__
 #  endif
+#endif
+
+
+// OIIO_HOSTDEVICE is used to supply the function decorators needed when
+// compiling for CUDA devices.
+#ifdef __CUDACC__
+#  define OIIO_HOSTDEVICE __host__ __device__
+#else
+#  define OIIO_HOSTDEVICE
 #endif
 
 

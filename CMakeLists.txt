@@ -70,7 +70,6 @@ option (OIIO_BUILD_TOOLS "Build the command-line tools" ON)
 option (OIIO_BUILD_TESTS "Build the unit tests" ON)
 option (USE_OPENGL "Include OpenGL support" ON)
 option (USE_QT "Include Qt support" ON)
-option (FORCE_OPENGL_1 "Force iv to use OpenGL's fixed pipeline")
 option (USE_PYTHON "Build the Python bindings" ON)
 set (PYTHON_VERSION "2.7" CACHE STRING "Target version of python to find")
 option (PYLIB_INCLUDE_SONAME "If ON, soname/soversion will be set for Python module library" OFF)
@@ -100,6 +99,9 @@ set (TEX_BATCH_SIZE "" CACHE STRING "Force TextureSystem SIMD batch size (e.g. 1
 set (SOVERSION ${OIIO_VERSION_MAJOR}.${OIIO_VERSION_MINOR}
      CACHE STRING "Set the SO version in the SO name of the output library")
 option (BUILD_OIIOUTIL_ONLY "If ON, will build *only* libOpenImageIO_Util")
+option (BUILD_DOCS "If ON, build documentation and man pages.")
+option (INSTALL_DOCS "If ON, install documentation and man pages.")
+
 
 if (NOT OIIO_THREAD_ALLOW_DCLP)
     add_definitions ("-DOIIO_THREAD_ALLOW_DCLP=0")
@@ -191,7 +193,7 @@ if (USE_PYTHON AND NOT BUILD_OIIOUTIL_ONLY)
 endif ()
 
 add_subdirectory (src/include)
-if (INSTALL_DOCS)
+if (BUILD_DOCS)
     add_subdirectory (src/doc)
 endif ()
 add_subdirectory (src/fonts)
@@ -230,8 +232,7 @@ add_custom_target ( CopyFiles ALL DEPENDS "${CMAKE_BINARY_DIR}/testsuite/runtest
 # Basic tests that apply even to continuous integration tests:
 oiio_add_tests (
                 gpsread misnamed-file nonwhole-tiles
-                oiiotool oiiotool-attribs
-                oiiotool-composite oiiotool-copy
+                oiiotool oiiotool-attribs oiiotool-composite oiiotool-copy
                 oiiotool-deep oiiotool-fixnan
                 oiiotool-pattern oiiotool-readerror
                 oiiotool-subimage oiiotool-text oiiotool-xform
@@ -275,6 +276,10 @@ if (USE_PYTHON AND NOT BUILD_OIIOUTIL_ONLY)
     endif ()
 endif ()
 
+# Add tests that require OCIO
+if (USE_OCIO AND OCIO_FOUND)
+    oiio_add_tests (oiiotool-color)
+endif ()
 
 # Advanced tests that are done by hand and for releases:
 # FIXME -- at some point, try to fix these or provide new ref images
@@ -296,7 +301,7 @@ oiio_add_tests (bmp
 
 oiio_add_tests (tiff-suite tiff-depths tiff-misc
     IMAGEDIR libtiffpic
-    URL http://www.remotesensing.org/libtiff/images.html)
+    URL http://www.simplesystems.org/libtiff/images.html)
 
 oiio_add_tests (openexr-suite openexr-multires openexr-chroma openexr-v2 perchannel
     IMAGEDIR openexr-images
@@ -314,6 +319,11 @@ oiio_add_tests (jpeg2000
 
 oiio_add_tests (pnm
     IMAGEDIR oiio-images/pnm
+    URL "Recent checkout of oiio-images")
+
+oiio_add_tests (raw
+    FOUNDVAR LIBRAW_FOUND
+    IMAGEDIR oiio-images/raw
     URL "Recent checkout of oiio-images")
 
 oiio_add_tests (targa-tgautils

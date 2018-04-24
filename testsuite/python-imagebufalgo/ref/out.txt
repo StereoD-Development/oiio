@@ -92,6 +92,10 @@ Comparing "cmul2.exr" and "../../../../testsuite/oiiotool/ref/cmul2.exr"
 PASS
 Comparing "mad.exr" and "../../../../testsuite/oiiotool/ref/mad.exr"
 PASS
+Comparing "mad2.exr" and "ref/mad2.exr"
+PASS
+Comparing "mad3.exr" and "ref/mad3.exr"
+PASS
 Comparing "cpow1.exr" and "../../../../testsuite/oiiotool/ref/cpow1.exr"
 PASS
 Comparing "cpow2.exr" and "../../../../testsuite/oiiotool/ref/cpow2.exr"
@@ -106,9 +110,9 @@ Comparing "invert.tif" and "../../../../testsuite/oiiotool/ref/invert.tif"
 PASS
 Comparing "chsum.tif" and "../../../../testsuite/oiiotool/ref/chsum.tif"
 PASS
-Comparing "colormap-inferno.tif" and "../../../../testsuite/oiiotool/ref/colormap-inferno.tif"
+Comparing "colormap-inferno.tif" and "../../../../testsuite/oiiotool-color/ref/colormap-inferno.tif"
 PASS
-Comparing "colormap-custom.tif" and "../../../../testsuite/oiiotool/ref/colormap-custom.tif"
+Comparing "colormap-custom.tif" and "../../../../testsuite/oiiotool-color/ref/colormap-custom.tif"
 PASS
 Comparing "grid-clamped.tif" and "../../../../testsuite/oiiotool/ref/grid-clamped.tif"
 PASS

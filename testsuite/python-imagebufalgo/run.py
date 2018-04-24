@@ -6,6 +6,7 @@ imagedir = parent + "oiio-images"
 
 refdirlist = [
     "../../../../testsuite/oiiotool/ref/",
+    "../../../../testsuite/oiiotool-color/ref/",
     "../../../../testsuite/oiiotool-composite/ref/",
     "../../../../testsuite/oiiotool-fixnan/ref/",
     "../../../../testsuite/oiiotool-deep/ref/",
@@ -34,7 +35,7 @@ outputs = ["black.tif", "filled.tif", "checker.tif",
            "cshift.tif", "cadd1.exr", "cadd2.exr", "add.exr", "sub.exr",
            "abs.exr", "absdiff.exr",
            "mul.exr", "cmul1.exr", "cmul2.exr",
-           "mad.exr",
+           "mad.exr", "mad2.exr", "mad3.exr",
            "cpow1.exr", "cpow2.exr",
            "div.exr", "divc1.exr", "divc2.exr",
            "invert.tif",

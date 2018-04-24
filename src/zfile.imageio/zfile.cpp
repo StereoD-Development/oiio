@@ -66,11 +66,11 @@ class ZfileInput final : public ImageInput {
 public:
     ZfileInput () { init(); }
     virtual ~ZfileInput () { close(); }
-    virtual const char * format_name (void) const { return "zfile"; }
-    virtual bool valid_file (const std::string &filename) const;
-    virtual bool open (const std::string &name, ImageSpec &newspec);
-    virtual bool close ();
-    virtual bool read_native_scanline (int y, int z, void *data);
+    virtual const char * format_name (void) const override { return "zfile"; }
+    virtual bool valid_file (const std::string &filename) const override;
+    virtual bool open (const std::string &name, ImageSpec &newspec) override;
+    virtual bool close () override;
+    virtual bool read_native_scanline (int y, int z, void *data) override;
 
 private:
     std::string m_filename;       ///< Stash the filename
@@ -92,15 +92,15 @@ class ZfileOutput final : public ImageOutput {
 public:
     ZfileOutput () { init(); }
     virtual ~ZfileOutput () { close(); }
-    virtual const char * format_name (void) const { return "zfile"; }
+    virtual const char * format_name (void) const override { return "zfile"; }
     virtual bool open (const std::string &name, const ImageSpec &spec,
-                       OpenMode mode=Create);
-    virtual bool close ();
+                       OpenMode mode=Create) override;
+    virtual bool close () override;
     virtual bool write_scanline (int y, int z, TypeDesc format,
-                                 const void *data, stride_t xstride);
+                                 const void *data, stride_t xstride) override;
     virtual bool write_tile (int x, int y, int z, TypeDesc format,
                              const void *data, stride_t xstride,
-                             stride_t ystride, stride_t zstride);
+                             stride_t ystride, stride_t zstride) override;
 
 private:
     std::string m_filename;       ///< Stash the filename
@@ -143,13 +143,14 @@ OIIO_PLUGIN_EXPORTS_END
 bool
 ZfileInput::valid_file (const std::string &filename) const
 {
-    FILE *fd = Filesystem::fopen (filename, "rb");
-    gzFile gz = (fd) ? gzdopen (fileno (fd), "rb") : NULL;
-    if (! gz) {
-        if (fd)
-            fclose (fd);
+#ifdef _WIN32
+    std::wstring wpath = Strutil::utf8_to_utf16(filename);
+    gzFile gz = gzopen_w (wpath.c_str(), "rb");
+#else
+    gzFile gz = gzopen (filename.c_str(), "rb");
+#endif
+    if (! gz)
         return false;
-    }
 
     ZfileHeader header;
     gzread (gz, &header, sizeof(header));

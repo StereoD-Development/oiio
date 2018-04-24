@@ -208,37 +208,37 @@ class OpenEXRInput final : public ImageInput {
 public:
     OpenEXRInput ();
     virtual ~OpenEXRInput () { close(); }
-    virtual const char * format_name (void) const { return "openexr"; }
-    virtual int supports (string_view feature) const {
+    virtual const char * format_name (void) const override { return "openexr"; }
+    virtual int supports (string_view feature) const override {
         return (feature == "arbitrary_metadata"
              || feature == "exif"   // Because of arbitrary_metadata
              || feature == "iptc"); // Because of arbitrary_metadata
     }
-    virtual bool valid_file (const std::string &filename) const;
-    virtual bool open (const std::string &name, ImageSpec &newspec);
-    virtual bool open (char *buffer, size_t size, ImageSpec &newspec);
-    virtual bool close ();
-    virtual int current_subimage (void) const { return m_subimage; }
-    virtual int current_miplevel (void) const { return m_miplevel; }
-    virtual bool seek_subimage (int subimage, int miplevel, ImageSpec &newspec);
-    virtual bool read_native_scanline (int y, int z, void *data);
-    virtual bool read_native_scanlines (int ybegin, int yend, int z, void *data);
+    virtual bool valid_file (const std::string &filename) const override;
+    virtual bool open (const std::string &name, ImageSpec &newspec) override;
+    virtual bool open (char *buffer, size_t size, ImageSpec &newspec) override;
+    virtual bool close () override;
+    virtual int current_subimage (void) const override { return m_subimage; }
+    virtual int current_miplevel (void) const override { return m_miplevel; }
+    virtual bool seek_subimage (int subimage, int miplevel, ImageSpec &newspec) override;
+    virtual bool read_native_scanline (int y, int z, void *data) override;
+    virtual bool read_native_scanlines (int ybegin, int yend, int z, void *data) override;
     virtual bool read_native_scanlines (int ybegin, int yend, int z,
-                                        int chbegin, int chend, void *data);
-    virtual bool read_native_tile (int x, int y, int z, void *data);
+                                        int chbegin, int chend, void *data) override;
+    virtual bool read_native_tile (int x, int y, int z, void *data) override;
     virtual bool read_native_tiles (int xbegin, int xend, int ybegin, int yend,
-                                    int zbegin, int zend, void *data);
+                                    int zbegin, int zend, void *data) override;
     virtual bool read_native_tiles (int xbegin, int xend, int ybegin, int yend,
                                     int zbegin, int zend,
-                                    int chbegin, int chend, void *data);
+                                    int chbegin, int chend, void *data) override;
     virtual bool read_native_deep_scanlines (int ybegin, int yend, int z,
                                              int chbegin, int chend,
-                                             DeepData &deepdata);
+                                             DeepData &deepdata) override;
     virtual bool read_native_deep_tiles (int xbegin, int xend,
                                          int ybegin, int yend,
                                          int zbegin, int zend,
                                          int chbegin, int chend,
-                                         DeepData &deepdata);
+                                         DeepData &deepdata) override;
 
 private:
     bool open (ImageSpec &newspec, bool tiled);
@@ -258,8 +258,8 @@ private:
 
         PartInfo () : initialized(false) { }
         ~PartInfo () { }
-        void parse_header (const Imf::Header *header);
-        void query_channels (const Imf::Header *header);
+        bool parse_header (OpenEXRInput *in, const Imf::Header *header);
+        bool query_channels (OpenEXRInput *in, const Imf::Header *header);
     };
 
     std::vector<PartInfo> m_parts;        ///< Image parts
@@ -448,7 +448,6 @@ OpenEXRInput::open (const std::string &name, ImageSpec &newspec)
 bool
 OpenEXRInput::open(ImageSpec &newspec, bool tiled)
 {
-#ifdef USE_OPENEXR_VERSION2
     try {
         m_input_multipart = new Imf::MultiPartInputFile (*m_input_stream);
     } catch (const std::exception &e) {
@@ -516,11 +515,13 @@ numlevels (int width, int roundingmode)
 
 
 
-void
-OpenEXRInput::PartInfo::parse_header (const Imf::Header *header)
+bool
+OpenEXRInput::PartInfo::parse_header (OpenEXRInput *in,
+                                      const Imf::Header *header)
 {
+    bool ok = true;
     if (initialized)
-        return;
+        return ok;
 
     ASSERT (header);
     spec = ImageSpec();
@@ -562,7 +563,8 @@ OpenEXRInput::PartInfo::parse_header (const Imf::Header *header)
         levelmode = Imf::ONE_LEVEL;
         nmiplevels = 1;
     }
-    query_channels (header);   // also sets format
+    if (! query_channels (in, header))   // also sets format
+        return false;
 
     spec.deep = Strutil::istarts_with (header->type(), "deep");
 
@@ -620,8 +622,7 @@ OpenEXRInput::PartInfo::parse_header (const Imf::Header *header)
             spec.attribute ("compression", comp);
     }
 
-    for (Imf::Header::ConstIterator hit = header->begin();
-             hit != header->end();  ++hit) {
+    for (auto hit = header->begin(); hit != header->end();  ++hit) {
         const Imf::IntAttribute *iattr;
         const Imf::FloatAttribute *fattr;
         const Imf::StringAttribute *sattr;
@@ -804,6 +805,7 @@ OpenEXRInput::PartInfo::parse_header (const Imf::Header *header)
     pvt::check_texture_metadata_sanity (spec);
 
     initialized = true;
+    return ok;
 }
 
 
@@ -833,10 +835,13 @@ struct ChanNameHolder {
     int special_index;
     Imf::PixelType exr_data_type;
     TypeDesc datatype;
+    int xSampling;
+    int ySampling;
 
-    ChanNameHolder (string_view fullname, int n, Imf::PixelType exrtype)
-        : fullname(fullname), exr_channel_number(n), exr_data_type(exrtype),
-          datatype(TypeDesc_from_ImfPixelType(exrtype))
+    ChanNameHolder (string_view fullname, int n, const Imf::Channel &exrchan)
+        : fullname(fullname), exr_channel_number(n), exr_data_type(exrchan.type),
+          datatype(TypeDesc_from_ImfPixelType(exrchan.type)),
+          xSampling(exrchan.xSampling), ySampling(exrchan.ySampling)
     {
         size_t dot = fullname.find_last_of ('.');
         if (dot == string_view::npos) {
@@ -877,20 +882,20 @@ struct ChanNameHolder {
 
 
 
-void
-OpenEXRInput::PartInfo::query_channels (const Imf::Header *header)
+bool
+OpenEXRInput::PartInfo::query_channels (OpenEXRInput *in,
+                                        const Imf::Header *header)
 {
     ASSERT (! initialized);
+    bool ok = true;
     spec.nchannels = 0;
     const Imf::ChannelList &channels (header->channels());
     std::vector<std::string> channelnames;  // Order of channels in file
     std::vector<ChanNameHolder> cnh;
     int c = 0;
-    for (Imf::ChannelList::ConstIterator ci = channels.begin();
-         ci != channels.end();  ++c, ++ci) {
-        cnh.emplace_back (ci.name(), c, ci.channel().type);
-        ++spec.nchannels;
-    }
+    for (auto ci = channels.begin(); ci != channels.end();  ++c, ++ci)
+        cnh.emplace_back (ci.name(), c, ci.channel());
+    spec.nchannels = int(cnh.size());
     std::sort (cnh.begin(), cnh.end(), ChanNameHolder::compare_cnh);
     // Now we should have cnh sorted into the order that we want to present
     // to the OIIO client.
@@ -910,11 +915,18 @@ OpenEXRInput::PartInfo::query_channels (const Imf::Header *header)
         if (spec.z_channel < 0 && (Strutil::iequals (cnh[c].suffix, "Z") ||
                                    Strutil::iequals (cnh[c].suffix, "Depth")))
             spec.z_channel = c;
+        if (cnh[c].xSampling != 1 || cnh[c].ySampling != 1) {
+            ok = false;
+            in->error ("Subsampled channels are not supported (channel \"%s\" has sampling %d,%d).",
+                       cnh[c].fullname, cnh[c].xSampling, cnh[c].ySampling);
+            // FIXME: Some day, we should handle channel subsampling.
+        }
     }
     ASSERT ((int)spec.channelnames.size() == spec.nchannels);
     ASSERT (spec.format != TypeDesc::UNKNOWN);
     if (all_one_format)
         spec.channelformats.clear();
+    return ok;
 }
 
 
@@ -935,7 +947,8 @@ OpenEXRInput::seek_subimage (int subimage, int miplevel, ImageSpec &newspec)
         const Imf::Header *header = NULL;
         if (m_input_multipart)
             header = &(m_input_multipart->header(subimage));
-        part.parse_header (header);
+        if (! part.parse_header (this, header))
+            return false;
         part.initialized = true;
     }
 

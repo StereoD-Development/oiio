@@ -43,6 +43,7 @@
 #include <OpenImageIO/imagebufalgo_util.h>
 #include <OpenImageIO/deepdata.h>
 #include <OpenImageIO/thread.h>
+#include "imageio_pvt.h"
 
 
 
@@ -84,6 +85,7 @@ ImageBufAlgo::paste (ImageBuf &dst, int xbegin, int ybegin,
                      int zbegin, int chbegin,
                      const ImageBuf &src, ROI srcroi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::paste");
     if (! srcroi.defined())
         srcroi = get_roi(src.spec());
 
@@ -113,12 +115,29 @@ copy_ (ImageBuf &dst, const ImageBuf &src,
 {
     using namespace ImageBufAlgo;
     parallel_image (roi, nthreads, [&](ROI roi){
+        ImageBuf::ConstIterator<S,D> s (src, roi);
+        ImageBuf::Iterator<D,D> d (dst, roi);
+        for ( ;  ! d.done();  ++d, ++s) {
+            for (int c = roi.chbegin;  c < roi.chend;  ++c)
+                d[c] = s[c];
+        }
+    });
+    return true;
+}
 
-    if (dst.deep()) {
+
+
+static bool
+copy_deep (ImageBuf &dst, const ImageBuf &src,
+       ROI roi, int nthreads=1)
+{
+    ASSERT (dst.deep() && src.deep());
+    using namespace ImageBufAlgo;
+    parallel_image (roi, nthreads, [&](ROI roi){
         DeepData &dstdeep (*dst.deepdata());
         const DeepData &srcdeep (*src.deepdata());
-        ImageBuf::ConstIterator<S,D> s (src, roi);
-        for (ImageBuf::Iterator<D,D> d (dst, roi);  ! d.done();  ++d, ++s) {
+        ImageBuf::ConstIterator<float> s (src, roi);
+        for (ImageBuf::Iterator<float> d (dst, roi);  ! d.done();  ++d, ++s) {
             int samples = s.deep_samples ();
             // The caller should ALREADY have set the samples, since that
             // is not thread-safe against the copying below.
@@ -136,30 +155,25 @@ copy_ (ImageBuf &dst, const ImageBuf &src,
                         d.set_deep_value (c, samp, (float)s.deep_value(c, samp));
             }
         }
-    } else {
-        ImageBuf::ConstIterator<S,D> s (src, roi);
-        ImageBuf::Iterator<D,D> d (dst, roi);
-        for ( ;  ! d.done();  ++d, ++s) {
-            for (int c = roi.chbegin;  c < roi.chend;  ++c)
-                d[c] = s[c];
-        }
-    }
-
     });
     return true;
 }
+
 
 
 bool
 ImageBufAlgo::copy (ImageBuf &dst, const ImageBuf &src, TypeDesc convert,
                     ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::copy");
     if (&dst == &src)   // trivial copy to self
         return true;
 
     roi.chend = std::min (roi.chend, src.nchannels());
     if (! dst.initialized()) {
         ImageSpec newspec = src.spec();
+        if (! roi.defined())
+            roi = src.roi();
         set_roi (newspec, roi);
         newspec.nchannels = roi.chend;
         if (convert != TypeUnknown)
@@ -174,9 +188,26 @@ ImageBufAlgo::copy (ImageBuf &dst, const ImageBuf &src, TypeDesc convert,
         ImageBuf::ConstIterator<float> s (src, roi);
         for (ImageBuf::Iterator<float> d (dst, roi);  !d.done();  ++d, ++s)
             d.set_deep_samples (s.deep_samples());
+        return copy_deep (dst, src, roi, nthreads);
     }
+
+    if (src.localpixels() && src.roi().contains(roi)) {
+        // Easy case -- if the buffer is already fully in memory and the roi
+        // is completely contained in the pixel window, this reduces to a
+        // parallel_convert_image, which is both threaded and already
+        // handles many special cases.
+        return parallel_convert_image (roi.nchannels(), roi.width(), roi.height(), roi.depth(),
+                                       src.pixeladdr (roi.xbegin, roi.ybegin, roi.zbegin, roi.chbegin),
+                                       src.spec().format, src.pixel_stride(),
+                                       src.scanline_stride(), src.z_stride(),
+                                       dst.pixeladdr (roi.xbegin, roi.ybegin, roi.zbegin, roi.chbegin),
+                                       dst.spec().format, dst.pixel_stride(),
+                                       dst.scanline_stride(), dst.z_stride(),
+                                       -1, -1, nthreads);
+    }
+
     bool ok;
-    OIIO_DISPATCH_COMMON_TYPES2 (ok, "copy", copy_, dst.spec().format, src.spec().format,
+    OIIO_DISPATCH_TYPES2 (ok, "copy", copy_, dst.spec().format, src.spec().format,
                           dst, src, roi, nthreads);
     return ok;
 }
@@ -187,6 +218,7 @@ bool
 ImageBufAlgo::crop (ImageBuf &dst, const ImageBuf &src,
                     ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::crop");
     dst.clear ();
     roi.chend = std::min (roi.chend, src.nchannels());
     if (! IBAprep (roi, &dst, &src, IBAprep_SUPPORT_DEEP))
@@ -199,10 +231,26 @@ ImageBufAlgo::crop (ImageBuf &dst, const ImageBuf &src,
         ImageBuf::ConstIterator<float> s (src, roi);
         for (ImageBuf::Iterator<float> d (dst, roi);  !d.done();  ++d, ++s)
             d.set_deep_samples (s.deep_samples());
+        return copy_deep (dst, src, roi, nthreads);
+    }
+
+    if (src.localpixels() && src.roi().contains(roi)) {
+        // Easy case -- if the buffer is already fully in memory and the roi
+        // is completely contained in the pixel window, this reduces to a
+        // parallel_convert_image, which is both threaded and already
+        // handles many special cases.
+        return parallel_convert_image (roi.nchannels(), roi.width(), roi.height(), roi.depth(),
+                                       src.pixeladdr (roi.xbegin, roi.ybegin, roi.zbegin, roi.chbegin),
+                                       src.spec().format, src.pixel_stride(),
+                                       src.scanline_stride(), src.z_stride(),
+                                       dst.pixeladdr (roi.xbegin, roi.ybegin, roi.zbegin, roi.chbegin),
+                                       dst.spec().format, dst.pixel_stride(),
+                                       dst.scanline_stride(), dst.z_stride(),
+                                       -1, -1, nthreads);
     }
 
     bool ok;
-    OIIO_DISPATCH_COMMON_TYPES2 (ok, "crop", copy_, dst.spec().format, src.spec().format,
+    OIIO_DISPATCH_TYPES2 (ok, "crop", copy_, dst.spec().format, src.spec().format,
                           dst, src, roi, nthreads);
     return ok;
 }
@@ -213,6 +261,7 @@ bool
 ImageBufAlgo::cut (ImageBuf &dst, const ImageBuf &src,
                    ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::cut");
     bool ok = crop (dst, src, roi, nthreads);
     ASSERT(ok);
     if (! ok)
@@ -260,6 +309,7 @@ ImageBufAlgo::circular_shift (ImageBuf &dst, const ImageBuf &src,
                               int xshift, int yshift, int zshift,
                               ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::circular_shift");
     if (! IBAprep (roi, &dst, &src))
         return false;
     bool ok;

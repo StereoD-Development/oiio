@@ -38,9 +38,11 @@
 #include <OpenEXR/half.h>
 
 #include <OpenImageIO/strutil.h>
+#include <OpenImageIO/sysutil.h>
 #include <OpenImageIO/color.h>
 #include <OpenImageIO/imagebufalgo.h>
 #include <OpenImageIO/imagebufalgo_util.h>
+#include "imageio_pvt.h"
 
 #ifdef USE_OCIO
 #include <OpenColorIO/OpenColorIO.h>
@@ -140,6 +142,7 @@ private:
     ColorProcessorMap colorprocmap;  // cache of ColorProcessors
     atomic_int colorprocs_requested;
     atomic_int colorprocs_created;
+    std::string m_configname;
 
 public:
     Impl() { }
@@ -214,6 +217,9 @@ public:
         spin_rw_write_lock lock (m_mutex);
         m_error.clear();
     }
+
+    const std::string& configname () const { return m_configname; }
+    void configname (string_view name) { m_configname = name; }
 };
 
 
@@ -280,8 +286,12 @@ ColorConfig::reset (string_view filename)
     try {
         if (filename.empty()) {
             getImpl()->config_ = OCIO::GetCurrentConfig();
+            string_view ocioenv = Sysutil::getenv ("OCIO");
+            if (ocioenv.size())
+                getImpl()->configname (ocioenv);
         } else {
             getImpl()->config_ = OCIO::Config::CreateFromFile (filename.c_str());
+            getImpl()->configname (filename);
         }
     }
     catch(OCIO::Exception &e) {
@@ -481,6 +491,18 @@ ColorConfig::getDefaultViewName(string_view display) const
         return getImpl()->config_->getDefaultView(display.c_str());
 #endif
     return NULL;
+}
+
+
+
+std::string
+ColorConfig::configname () const
+{
+#ifdef USE_OCIO
+    if (getImpl()->config_)
+        return getImpl()->configname();
+#endif
+    return "built-in";
 }
 
 
@@ -1083,6 +1105,7 @@ ImageBufAlgo::colorconvert (ImageBuf &dst, const ImageBuf &src,
                             ColorConfig *colorconfig,
                             ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::colorconvert");
     if (from.empty() || from == "current") {
         from = src.spec().get_string_attribute ("oiio:Colorspace", "Linear");
     }
@@ -1108,6 +1131,8 @@ ImageBufAlgo::colorconvert (ImageBuf &dst, const ImageBuf &src,
             return false;
         }
     }
+
+    logtime.stop();   // transition to other colorconvert
     bool ok = colorconvert (dst, src, processor.get(), unpremult, roi, nthreads);
     if (ok)
         dst.specmod().attribute ("oiio:ColorSpace", to);
@@ -1123,84 +1148,115 @@ colorconvert_impl (ImageBuf &R, const ImageBuf &A,
                    ROI roi, int nthreads)
 {
     using namespace ImageBufAlgo;
-    parallel_image (roi, parallel_image_options(nthreads), [&](ROI roi){
+    using namespace simd;
+    // Only process up to, and including, the first 4 channels.  This
+    // does let us process images with fewer than 4 channels, which is
+    // the intent.
+    int channelsToCopy = std::min (4, roi.nchannels());
+    if (channelsToCopy < 4)
+        unpremult = false;
+    parallel_image (roi, parallel_image_options(nthreads),
+                    [&,unpremult,channelsToCopy,processor](ROI roi){
         int width = roi.width();
         // Temporary space to hold one RGBA scanline
-        std::vector<float> scanline(width*4, 0.0f);
-
-        // Only process up to, and including, the first 4 channels.  This
-        // does let us process images with fewer than 4 channels, which is
-        // the intent.
-        // FIXME: Instead of loading the first 4 channels, obey
-        //        Rspec.alpha_channel index (but first validate that the
-        //        index is set properly for normal formats)
-
-        int channelsToCopy = std::min (4, roi.nchannels());
-
-        // Walk through all data in our buffer. (i.e., crop or overscan)
-        // FIXME: What about the display window?  Should this actually promote
-        // the datawindow to be union of data + display? This is useful if
-        // the color of black moves.  (In which case non-zero sections should
-        // now be promoted).  Consider the lin->log of a roto element, where
-        // black now moves to non-black.
-        float * dstPtr = NULL;
+        vfloat4 *scanline = OIIO_ALLOCA (vfloat4, width);
+        vfloat4 *alpha = OIIO_ALLOCA (vfloat4, width);
         const float fltmin = std::numeric_limits<float>::min();
-
-        // If the processor has crosstalk, and we'll be using it, we should
-        // reset the channels to 0 before loading each scanline.
-        bool clearScanline = (channelsToCopy<4 &&
-                              (processor->hasChannelCrosstalk() || unpremult));
-
         ImageBuf::ConstIterator<Atype> a (A, roi);
         ImageBuf::Iterator<Rtype> r (R, roi);
         for (int k = roi.zbegin; k < roi.zend; ++k) {
             for (int j = roi.ybegin; j < roi.yend; ++j) {
-                // Clear the scanline
-                if (clearScanline)
-                    memset (&scanline[0], 0, sizeof(float)*scanline.size());
-
                 // Load the scanline
-                dstPtr = &scanline[0];
                 a.rerange (roi.xbegin, roi.xend, j, j+1, k, k+1);
-                for ( ; !a.done(); ++a, dstPtr += 4)
+                for (int i = 0; !a.done(); ++a, ++i) {
+                    vfloat4 v (0.0f);
                     for (int c = 0; c < channelsToCopy; ++c)
-                        dstPtr[c] = a[c];
+                        v[c] = a[c];
+                    scanline[i] = v;
+                }
 
                 // Optionally unpremult
-                if ((channelsToCopy >= 4) && unpremult) {
+                if (unpremult) {
                     for (int i = 0; i < width; ++i) {
-                        float alpha = scanline[4*i+3];
-                        if (alpha > fltmin) {
-                            scanline[4*i+0] /= alpha;
-                            scanline[4*i+1] /= alpha;
-                            scanline[4*i+2] /= alpha;
-                        }
+                        // float alpha = scanline[i][3];
+                        vfloat4 a = shuffle<3>(scanline[i]);
+                        a = select (a >= fltmin, a, vfloat4::One());
+                        alpha[i] = a;
+                        scanline[i] *= rcp_fast(a);
                     }
                 }
 
                 // Apply the color transformation in place
-                processor->apply (&scanline[0], width, 1, 4,
+                processor->apply ((float *)&scanline[0], width, 1, 4,
                                   sizeof(float), 4*sizeof(float),
                                   width*4*sizeof(float));
 
-                // Optionally premult
-                if ((channelsToCopy >= 4) && unpremult) {
-                    for (int i = 0; i < width; ++i) {
-                        float alpha = scanline[4*i+3];
-                        if (alpha > fltmin) {
-                            scanline[4*i+0] *= alpha;
-                            scanline[4*i+1] *= alpha;
-                            scanline[4*i+2] *= alpha;
-                        }
-                    }
+                // Optionally re-premult
+                if (unpremult) {
+                    for (int i = 0; i < width; ++i)
+                        scanline[i] *= alpha[i];
                 }
 
                 // Store the scanline
-                dstPtr = &scanline[0];
+                float *dstPtr = (float *)&scanline[0];
                 r.rerange (roi.xbegin, roi.xend, j, j+1, k, k+1);
                 for ( ; !r.done(); ++r, dstPtr += 4)
                     for (int c = 0; c < channelsToCopy; ++c)
                         r[c] = dstPtr[c];
+            }
+        }
+    });
+    return true;
+}
+
+
+
+// Specialized version where both buffers are in memory (not cache based),
+// float data, and we are dealing with 4 channels.
+static bool
+colorconvert_impl_float_rgba (ImageBuf &R, const ImageBuf &A,
+                   const ColorProcessor* processor, bool unpremult,
+                   ROI roi, int nthreads)
+{
+    using namespace ImageBufAlgo;
+    using namespace simd;
+    ASSERT (R.localpixels() && A.localpixels() &&
+            R.spec().format == TypeFloat && A.spec().format == TypeFloat &&
+            R.nchannels() == 4 && A.nchannels() == 4);
+    parallel_image (roi, parallel_image_options(nthreads), [&](ROI roi){
+        // int Rchans = R.nchannels();
+        // int Achans = A.nchannels();
+        int width = roi.width();
+        // Temporary space to hold one RGBA scanline
+        vfloat4 *scanline = OIIO_ALLOCA (vfloat4, width);
+        vfloat4 *alpha = OIIO_ALLOCA (vfloat4, width);
+        const float fltmin = std::numeric_limits<float>::min();
+        for (int k = roi.zbegin; k < roi.zend; ++k) {
+            for (int j = roi.ybegin; j < roi.yend; ++j) {
+                // Load the scanline
+                memcpy (scanline, A.pixeladdr (roi.xbegin, j, k), width*4*sizeof(float));
+                // Optionally unpremult
+                if (unpremult) {
+                    for (int i = 0; i < width; ++i) {
+                        vfloat4 p (scanline[i]);
+                        vfloat4 a = shuffle<3>(p);
+                        a = select (a >= fltmin, a, vfloat4::One());
+                        alpha[i] = a;
+                        scanline[i] = p * rcp_fast(a);
+                    }
+                }
+
+                // Apply the color transformation in place
+                processor->apply ((float *)&scanline[0], width, 1, 4,
+                                  sizeof(float), 4*sizeof(float),
+                                  width*4*sizeof(float));
+
+                // Optionally premult
+                if (unpremult) {
+                    for (int i = 0; i < width; ++i)
+                        scanline[i] *= alpha[i];
+                }
+                memcpy (R.pixeladdr (roi.xbegin, j, k), scanline, width*4*sizeof(float));
             }
         }
     });
@@ -1214,6 +1270,7 @@ ImageBufAlgo::colorconvert (ImageBuf &dst, const ImageBuf &src,
                             const ColorProcessor* processor, bool unpremult,
                             ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::colorconvert");
     // If the processor is NULL, return false (error)
     if (!processor) {
         dst.error ("Passed NULL ColorProcessor to colorconvert() [probable application bug]");
@@ -1229,11 +1286,25 @@ ImageBufAlgo::colorconvert (ImageBuf &dst, const ImageBuf &src,
         return false;
 
     // If the processor is a no-op (and it's not an in-place conversion),
-    // use paste() to simplify the operation.
+    // use copy() to simplify the operation.
     if (processor->isNoOp()) {
         roi.chend = std::max (roi.chbegin+4, roi.chend);
-        return ImageBufAlgo::paste (dst, roi.xbegin, roi.ybegin, roi.zbegin,
-                                    roi.chbegin, src, roi, nthreads);
+        logtime.stop();  // transition to copy
+        return ImageBufAlgo::copy (dst, src, TypeUnknown, roi, nthreads);
+    }
+
+    if (unpremult && src.spec().alpha_channel >= 0 &&
+        src.spec().get_int_attribute("oiio:UnassociatedAlpha") != 0) {
+        // If we appear to be operating on an image that already has
+        // unassociated alpha, don't do a redundant unpremult step.
+        unpremult = false;
+    }
+
+    if (dst.localpixels() && src.localpixels() &&
+          dst.spec().format == TypeFloat && src.spec().format == TypeFloat &&
+          dst.nchannels() == 4 && src.nchannels() == 4) {
+        return colorconvert_impl_float_rgba (dst, src, processor,
+                                             unpremult, roi, nthreads);
     }
 
     bool ok = true;
@@ -1253,6 +1324,7 @@ ImageBufAlgo::ociolook (ImageBuf &dst, const ImageBuf &src,
                         ColorConfig *colorconfig,
                         ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::ociolook");
     if (from.empty() || from == "current") {
         from = src.spec().get_string_attribute ("oiio:Colorspace", "Linear");
     }
@@ -1280,6 +1352,8 @@ ImageBufAlgo::ociolook (ImageBuf &dst, const ImageBuf &src,
             return false;
         }
     }
+
+    logtime.stop();   // transition to colorconvert
     bool ok = colorconvert (dst, src, processor.get(), unpremult, roi, nthreads);
     if (ok)
         dst.specmod().attribute ("oiio:ColorSpace", to);
@@ -1297,6 +1371,7 @@ ImageBufAlgo::ociodisplay (ImageBuf &dst, const ImageBuf &src,
                            ColorConfig *colorconfig,
                            ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::ociodisplay");
     if (from.empty() || from == "current") {
         from = src.spec().get_string_attribute ("oiio:Colorspace", "Linear");
     }
@@ -1320,6 +1395,8 @@ ImageBufAlgo::ociodisplay (ImageBuf &dst, const ImageBuf &src,
             return false;
         }
     }
+
+    logtime.stop();   // transition to colorconvert
     bool ok = colorconvert (dst, src, processor.get(), unpremult, roi, nthreads);
     return ok;
 }
@@ -1331,6 +1408,7 @@ ImageBufAlgo::ociofiletransform (ImageBuf &dst, const ImageBuf &src,
                         string_view name, bool inverse, bool unpremult,
                         ColorConfig *colorconfig, ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::ociofiletransform");
     if (name.empty()) {
         dst.error ("Unknown filetransform name");
         return false;
@@ -1351,6 +1429,8 @@ ImageBufAlgo::ociofiletransform (ImageBuf &dst, const ImageBuf &src,
             return false;
         }
     }
+
+    logtime.stop();   // transition to colorconvert
     bool ok = colorconvert (dst, src, processor.get(), unpremult, roi, nthreads);
     if (ok)
         dst.specmod().attribute ("oiio:ColorSpace", name);

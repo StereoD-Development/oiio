@@ -62,14 +62,14 @@ class DICOMInput final : public ImageInput {
 public:
     DICOMInput () {}
     virtual ~DICOMInput() { close(); }
-    virtual const char * format_name (void) const { return "dicom"; }
-    virtual int supports (string_view feature) const { return false; }
-    virtual bool open (const std::string &name, ImageSpec &newspec);
+    virtual const char * format_name (void) const override { return "dicom"; }
+    virtual int supports (string_view feature) const override { return false; }
+    virtual bool open (const std::string &name, ImageSpec &newspec) override;
     virtual bool open (const std::string &name, ImageSpec &newspec,
-                       const ImageSpec &config);
-    virtual bool close();
-    virtual bool seek_subimage (int subimage, int miplevel, ImageSpec &newspec);
-    virtual bool read_native_scanline (int y, int z, void *data);
+                       const ImageSpec &config) override;
+    virtual bool close() override;
+    virtual bool seek_subimage (int subimage, int miplevel, ImageSpec &newspec) override;
+    virtual bool read_native_scanline (int y, int z, void *data) override;
 
 private:
     std::unique_ptr<DicomImage> m_img;
@@ -288,7 +288,7 @@ DICOMInput::read_metadata ()
                 if (dataset->findAndGetFloat32 (tag, val).good())
                     m_spec.attribute (name, val);
             } else if (evr == EVR_FD
-#if PACKAGE_VERSION_NUMBER >= 361
+#if PACKAGE_VERSION_NUMBER >= 362
                        || evr == EVR_OD
 #endif
                        ) {
@@ -297,13 +297,13 @@ DICOMInput::read_metadata ()
                     m_spec.attribute (name, (float)val);
                 // N.B. we cast to float. Will anybody care?
             } else if (evr == EVR_SL || evr == EVR_IS) {
-                int val;
+                Sint32 val;
                 if (dataset->findAndGetSint32 (tag, val).good())
-                    m_spec.attribute (name, val);
+                    m_spec.attribute (name, static_cast<int>(val));
             } else if (evr == EVR_UL) {
-                unsigned int val;
+                Uint32 val;
                 if (dataset->findAndGetUint32 (tag, val).good())
-                    m_spec.attribute (name, TypeDesc::UINT32, &val);
+                    m_spec.attribute (name, static_cast<unsigned int>(val));
             } else if (evr == EVR_US) {
                 unsigned short val;
                 if (dataset->findAndGetUint16 (tag, val).good())
@@ -312,7 +312,7 @@ DICOMInput::read_metadata ()
                        evr == EVR_DT || evr == EVR_LT || evr == EVR_PN ||
                        evr == EVR_ST || evr == EVR_TM || evr == EVR_UI ||
                        evr == EVR_UT || evr == EVR_LO || evr == EVR_SH
-#if PACKAGE_VERSION_NUMBER >= 361
+#if PACKAGE_VERSION_NUMBER >= 362
                        || evr == EVR_UC ||evr == EVR_UR
 #endif
                        ) {

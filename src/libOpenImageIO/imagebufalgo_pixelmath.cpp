@@ -45,6 +45,7 @@
 #include <OpenImageIO/dassert.h>
 #include <OpenImageIO/simd.h>
 #include <OpenImageIO/color.h>
+#include "imageio_pvt.h"
 
 
 
@@ -79,6 +80,7 @@ ImageBufAlgo::clamp (ImageBuf &dst, const ImageBuf &src,
                      const float *min, const float *max,
                      bool clampalpha01, ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::clamp");
     if (! IBAprep (roi, &dst, &src))
         return false;
     std::vector<float> minvec, maxvec;
@@ -150,6 +152,7 @@ bool
 ImageBufAlgo::absdiff (ImageBuf &dst, const ImageBuf &A, const ImageBuf &B,
                        ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::absdiff");
     if (! IBAprep (roi, &dst, &A, &B))
         return false;
     ROI origroi = roi;
@@ -182,6 +185,7 @@ bool
 ImageBufAlgo::absdiff (ImageBuf &dst, const ImageBuf &A, const float *b,
                        ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::absdiff");
     if (! IBAprep (roi, &dst, &A, IBAprep_CLAMP_MUTUAL_NCHANNELS))
         return false;
     bool ok;
@@ -196,6 +200,7 @@ bool
 ImageBufAlgo::absdiff (ImageBuf &dst, const ImageBuf &A, float b,
                        ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::absdiff");
     if (! IBAprep (roi, &dst, &A, IBAprep_CLAMP_MUTUAL_NCHANNELS))
         return false;
     int nc = dst.nchannels();
@@ -239,6 +244,7 @@ bool
 ImageBufAlgo::pow (ImageBuf &dst, const ImageBuf &A, const float *b,
                    ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::pow");
     if (! IBAprep (roi, &dst, &A, IBAprep_CLAMP_MUTUAL_NCHANNELS))
         return false;
     bool ok;
@@ -253,6 +259,7 @@ bool
 ImageBufAlgo::pow (ImageBuf &dst, const ImageBuf &A, float b,
                    ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::pow");
     if (! IBAprep (roi, &dst, &A, IBAprep_CLAMP_MUTUAL_NCHANNELS))
         return false;
     int nc = A.nchannels();
@@ -293,6 +300,7 @@ bool
 ImageBufAlgo::channel_sum (ImageBuf &dst, const ImageBuf &src,
                            const float *weights, ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::channel_sum");
     if (! roi.defined())
         roi = get_roi(src.spec());
     roi.chend = std::min (roi.chend, src.nchannels());
@@ -492,6 +500,7 @@ bool
 ImageBufAlgo::rangecompress (ImageBuf &dst, const ImageBuf &src,
                              bool useluma, ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::rangecompress");
     if (! IBAprep (roi, &dst, &src, IBAprep_CLAMP_MUTUAL_NCHANNELS))
         return false;
     bool ok;
@@ -507,6 +516,7 @@ bool
 ImageBufAlgo::rangeexpand (ImageBuf &dst, const ImageBuf &src,
                            bool useluma, ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::rangeexpand");
     if (! IBAprep (roi, &dst, &src, IBAprep_CLAMP_MUTUAL_NCHANNELS))
         return false;
     bool ok;
@@ -560,9 +570,14 @@ bool
 ImageBufAlgo::unpremult (ImageBuf &dst, const ImageBuf &src,
                          ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::unpremult");
     if (! IBAprep (roi, &dst, &src, IBAprep_CLAMP_MUTUAL_NCHANNELS))
         return false;
-    if (src.spec().alpha_channel < 0) {
+    if (src.spec().alpha_channel < 0 
+        // Wise?  || src.spec().get_int_attribute("oiio:UnassociatedAlpha") != 0
+        ) {
+        // If there is no alpha channel, just *copy* instead of dividing
+        // by alpha.
         if (&dst != &src)
             return paste (dst, src.spec().x, src.spec().y, src.spec().z,
                           roi.chbegin, src, roi, nthreads);
@@ -571,6 +586,8 @@ ImageBufAlgo::unpremult (ImageBuf &dst, const ImageBuf &src,
     bool ok;
     OIIO_DISPATCH_COMMON_TYPES2 (ok, "unpremult", unpremult_, dst.spec().format,
                           src.spec().format, dst, src, roi, nthreads);
+    // Mark the output as having unassociated alpha
+    dst.specmod().attribute ("oiio:UnassociatedAlpha", 1);
     return ok;
 }
 
@@ -613,6 +630,7 @@ bool
 ImageBufAlgo::premult (ImageBuf &dst, const ImageBuf &src,
                        ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::premult");
     if (! IBAprep (roi, &dst, &src, IBAprep_CLAMP_MUTUAL_NCHANNELS))
         return false;
     if (src.spec().alpha_channel < 0) {
@@ -624,6 +642,8 @@ ImageBufAlgo::premult (ImageBuf &dst, const ImageBuf &src,
     bool ok;
     OIIO_DISPATCH_COMMON_TYPES2 (ok, "premult", premult_, dst.spec().format,
                           src.spec().format, dst, src, roi, nthreads);
+    // Clear the output of any prior marking of associated alpha
+    dst.specmod().erase_attribute ("oiio:UnassociatedAlpha");
     return ok;
 }
 
@@ -662,6 +682,7 @@ ImageBufAlgo::color_map (ImageBuf &dst, const ImageBuf &src,
                          array_view<const float> knots,
                          ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::color_map");
     if (srcchannel >= src.nchannels()) {
         dst.error ("invalid source channel selected");
         return false;
@@ -752,6 +773,7 @@ ImageBufAlgo::color_map (ImageBuf &dst, const ImageBuf &src,
                          int srcchannel, string_view mapname,
                          ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::color_map");
     if (srcchannel >= src.nchannels()) {
         dst.error ("invalid source channel selected");
         return false;
@@ -932,6 +954,7 @@ ImageBufAlgo::fixNonFinite (ImageBuf &dst, const ImageBuf &src,
                             NonFiniteFixMode mode, int *pixelsFixed,
                             ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::fixNonFinite");
     if (mode != ImageBufAlgo::NONFINITE_NONE &&
         mode != ImageBufAlgo::NONFINITE_BLACK &&
         mode != ImageBufAlgo::NONFINITE_BOX3 &&
@@ -1013,14 +1036,14 @@ static bool
 over_impl (ImageBuf &R, const ImageBuf &A, const ImageBuf &B,
            bool zcomp, bool z_zeroisinf, ROI roi, int nthreads)
 {
-    ImageBufAlgo::parallel_image (roi, nthreads, [&](ROI roi){
-        // It's already guaranteed that R, A, and B have matching channel
-        // ordering, and have an alpha channel.  So just decode one.
-        int nchannels = 0, alpha_channel = 0, z_channel = 0, ncolor_channels = 0;
-        decode_over_channels (R, nchannels, alpha_channel,
-                              z_channel, ncolor_channels);
-        bool has_z = (z_channel >= 0);
+    // It's already guaranteed that R, A, and B have matching channel
+    // ordering, and have an alpha channel.  So just decode one.
+    int nchannels = 0, alpha_channel = 0, z_channel = 0, ncolor_channels = 0;
+    decode_over_channels (R, nchannels, alpha_channel,
+                          z_channel, ncolor_channels);
+    bool has_z = (z_channel >= 0);
 
+    ImageBufAlgo::parallel_image (roi, nthreads, [=,&R,&A,&B](ROI roi){
         ImageBuf::ConstIterator<Atype> a (A, roi);
         ImageBuf::ConstIterator<Btype> b (B, roi);
         ImageBuf::Iterator<Rtype> r (R, roi);
@@ -1060,13 +1083,67 @@ over_impl (ImageBuf &R, const ImageBuf &A, const ImageBuf &B,
 
 
 
+// Special case -- 4 channel RGBA float, in-memory buffer, no wrapping.
+// Use loops and SIMD.
+static bool
+over_impl_rgbafloat (ImageBuf &R, const ImageBuf &A, const ImageBuf &B,
+                     ROI roi, int nthreads)
+{
+    using namespace simd;
+    ASSERT (A.localpixels() && B.localpixels() &&
+            A.spec().format == TypeFloat && A.nchannels() == 4 &&
+            B.spec().format == TypeFloat && B.nchannels() == 4 &&
+            A.spec().alpha_channel == 3 && A.spec().z_channel < 0 &&
+            B.spec().alpha_channel == 3 && B.spec().z_channel < 0);
+    // const int nchannels = 4, alpha_channel = 3;
+    ImageBufAlgo::parallel_image (roi, nthreads, [=,&R,&A,&B](ROI roi){
+        vfloat4 zero = vfloat4::Zero();
+        vfloat4 one  = vfloat4::One();
+        int w = roi.width();
+        for (int z = roi.zbegin; z < roi.zend; ++z) {
+            for (int y = roi.ybegin; y < roi.yend; ++y) {
+                float *r = (float *) R.pixeladdr (roi.xbegin, y, z);
+                const float *a = (const float *) A.pixeladdr (roi.xbegin, y, z);
+                const float *b = (const float *) B.pixeladdr (roi.xbegin, y, z);
+                for (int x = 0; x < w; ++x, r += 4, a += 4, b += 4) {
+                    vfloat4 a_simd (a);
+                    vfloat4 b_simd (b);
+                    vfloat4 alpha = shuffle<3>(a_simd);
+                    vfloat4 one_minus_alpha = one - clamp (alpha, zero, one);
+                    vfloat4 result = a_simd + one_minus_alpha * b_simd;
+                    result.store (r);
+                }
+            }
+        }
+    });
+    return true;
+}
+
+
+
 bool
 ImageBufAlgo::over (ImageBuf &dst, const ImageBuf &A, const ImageBuf &B,
                     ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::over");
     if (! IBAprep (roi, &dst, &A, &B, NULL,
                    IBAprep_REQUIRE_ALPHA | IBAprep_REQUIRE_SAME_NCHANNELS))
         return false;
+
+    if (A.localpixels() && B.localpixels() &&
+        A.spec().format == TypeFloat && A.nchannels() == 4 &&
+        B.spec().format == TypeFloat && B.nchannels() == 4 &&
+        A.spec().alpha_channel == 3 && A.spec().z_channel < 0 &&
+        B.spec().alpha_channel == 3 && B.spec().z_channel < 0 &&
+        A.roi().contains(roi) && B.roi().contains(roi) &&
+        roi.chbegin == 0 && roi.chend == 4) {
+        // Easy case -- both buffers are float, 4 channels, alpha is
+        // channel[3], no special z channel, and pixel data windows
+        // completely cover the roi. This reduces to a simpler case we can
+        // handle without iterators and taking advantage of SIMD.
+        return over_impl_rgbafloat (dst, A, B, roi, nthreads);
+    }
+
     bool ok;
     OIIO_DISPATCH_COMMON_TYPES3 (ok, "over", over_impl, dst.spec().format,
                                  A.spec().format, B.spec().format,
@@ -1080,6 +1157,7 @@ bool
 ImageBufAlgo::zover (ImageBuf &dst, const ImageBuf &A, const ImageBuf &B,
                      bool z_zeroisinf, ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::zover");
     if (! IBAprep (roi, &dst, &A, &B, NULL,
                    IBAprep_REQUIRE_ALPHA | IBAprep_REQUIRE_Z |
                    IBAprep_REQUIRE_SAME_NCHANNELS))

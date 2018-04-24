@@ -1123,7 +1123,7 @@ float
 Strutil::strtof (const char *nptr, char **endptr)
 {
     // Can use strtod_l on platforms that support it
-#if defined (__linux__) || defined(__APPLE__) || defined(__FreeBSD__) || defined(__FreeBSD_kernel__)
+#if defined (__linux__) || defined(__APPLE__) || defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__GLIBC__)
     // static initialization inside function is thread-safe by C++11 rules!
     static locale_t c_loc = newlocale(LC_ALL_MASK, "C", nullptr);
 # ifdef __APPLE__
@@ -1141,12 +1141,12 @@ Strutil::strtof (const char *nptr, char **endptr)
     std::locale native; // default ctr gets current global locale
     char nativepoint = std::use_facet<std::numpunct<char>>(native).decimal_point();
     // If the native locale uses decimal, just directly use strtof.
-    if (nativepoint = '.')
+    if (nativepoint == '.')
         return strtof (nptr, endptr);
     // Complex case -- CHEAT by making a copy of the string and replacing
     // the decimal, then use system strtof!
     std::string s (nptr);
-    const char* pos = strchr (nptr, pointchar);
+    const char* pos = strchr (nptr, nativepoint);
     if (pos) {
         s[pos-nptr] = nativepoint;
         auto d = strtof (s.c_str(), endptr);
@@ -1164,7 +1164,7 @@ double
 Strutil::strtod (const char *nptr, char **endptr)
 {
     // Can use strtod_l on platforms that support it
-#if defined (__linux__) || defined(__APPLE__) || defined(__FreeBSD__) || defined(__FreeBSD_kernel__)
+#if defined (__linux__) || defined(__APPLE__) || defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__GLIBC__)
     // static initialization inside function is thread-safe by C++11 rules!
     static locale_t c_loc = newlocale(LC_ALL_MASK, "C", nullptr);
     return strtod_l (nptr, endptr, c_loc);
@@ -1177,12 +1177,12 @@ Strutil::strtod (const char *nptr, char **endptr)
     std::locale native; // default ctr gets current global locale
     char nativepoint = std::use_facet<std::numpunct<char>>(native).decimal_point();
     // If the native locale uses decimal, just directly use strtod.
-    if (nativepoint = '.')
+    if (nativepoint == '.')
         return strtod (nptr, endptr);
     // Complex case -- CHEAT by making a copy of the string and replacing
     // the decimal, then use system strtod!
     std::string s (nptr);
-    const char* pos = strchr (nptr, pointchar);
+    const char* pos = strchr (nptr, nativepoint);
     if (pos) {
         s[pos-nptr] = nativepoint;
         auto d = ::strtod (s.c_str(), endptr);

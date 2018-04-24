@@ -832,9 +832,9 @@ bool OIIO_API div (ImageBuf &dst, const ImageBuf &A, float B,
 /// more efficient and not require a temporary ImageBuf.
 /// It is permitted for any of dst, A, B, or C to be the same image.
 ///
-/// A is always an ImageBuf. B and C may either both be ImageBuf or both be
-/// arrays of floats (one per channel, for each channel of A),
-/// or both be a single float (same value for all channels).
+/// A is always an ImageBuf. B and C may either be ImageBuf or arrays of
+/// floats (one per channel, for each channel of A), or both be a single
+/// float (same value for all channels).
 ///
 /// If roi is not initialized, it will be set to the union of the pixel
 /// regions of A and B.  If dst is not initialized, it will be sized based
@@ -850,6 +850,12 @@ bool OIIO_API div (ImageBuf &dst, const ImageBuf &A, float B,
 /// message set in dst).
 bool OIIO_API mad (ImageBuf &dst, const ImageBuf &A, const ImageBuf &B,
                    const ImageBuf &C, ROI roi=ROI::All(), int nthreads=0);
+bool OIIO_API mad (ImageBuf &dst, const ImageBuf &A, const float *B,
+                   const ImageBuf &C, ROI roi=ROI::All(), int nthreads=0);
+inline bool OIIO_API mad (ImageBuf &dst, const ImageBuf &A, const ImageBuf &B,
+                   const float *C, ROI roi=ROI::All(), int nthreads=0) {
+    return mad (dst, A, C, B, roi, nthreads);
+}
 bool OIIO_API mad (ImageBuf &dst, const ImageBuf &A, const float *B,
                    const float *C, ROI roi=ROI::All(), int nthreads=0);
 bool OIIO_API mad (ImageBuf &dst, const ImageBuf &A, float B,
@@ -964,15 +970,17 @@ bool OIIO_API rangeexpand (ImageBuf &dst, const ImageBuf &src,
 /// size as specified by roi.  If roi is not defined it will be all
 /// of dst, if dst is defined, or all of src, if dst is not yet defined.
 ///
-/// If unpremult is true, unpremultiply before color conversion, then
-/// premultiply after the color conversion.  You may want to use this
-/// flag if your image contains an alpha channel.
+/// If unpremult is true, divide the RGB channels by alpha (if it exists and
+/// is nonzero) before color conversion, then re-multiply by alpha after the
+/// after the color conversion. Passing unpremult=false skips this step,
+/// which may be desirable if you know that the image is "unassociated alpha"
+/// (a.k.a. "not pre-multiplied colors").
 ///
 /// Return true on success, false on error (with an appropriate error
 /// message set in dst).
 bool OIIO_API colorconvert (ImageBuf &dst, const ImageBuf &src,
                             string_view from, string_view to,
-                            bool unpremult=false,
+                            bool unpremult=true,
                             string_view context_key="",
                             string_view context_value="",
                             ColorConfig *colorconfig=NULL,
@@ -985,9 +993,11 @@ bool OIIO_API colorconvert (ImageBuf &dst, const ImageBuf &src,
 /// size as specified by roi.  If roi is not defined it will be all
 /// of dst, if dst is defined, or all of src, if dst is not yet defined.
 ///
-/// If unpremult is true, unpremultiply before color conversion, then
-/// premultiply after the color conversion.  You may want to use this
-/// flag if your image contains an alpha channel.
+/// If unpremult is true, divide the RGB channels by alpha (if it exists and
+/// is nonzero) before color conversion, then re-multiply by alpha after the
+/// after the color conversion. Passing unpremult=false skips this step,
+/// which may be desirable if you know that the image is "unassociated alpha"
+/// (a.k.a. "not pre-multiplied colors").
 ///
 /// Return true on success, false on error (with an appropriate error
 /// message set in dst).
@@ -1023,7 +1033,7 @@ bool OIIO_API colorconvert (float *color, int nchannels,
 /// message set in dst).
 bool OIIO_API ociolook (ImageBuf &dst, const ImageBuf &src,
                         string_view looks, string_view from, string_view to,
-                        bool unpremult=false, bool inverse=false,
+                        bool unpremult=true, bool inverse=false,
                         string_view key="", string_view value="",
                         ColorConfig *colorconfig=NULL,
                         ROI roi=ROI::All(), int nthreads=0);
@@ -1032,23 +1042,25 @@ bool OIIO_API ociolook (ImageBuf &dst, const ImageBuf &src,
 /// "display" transform.  If from or looks are NULL, it will not
 /// override the look or source color space (subtly different than
 /// passing "", the empty string, which means to use no look or source
-/// space).
+/// space). If inverse is true, it will reverse the color transformation.
 ///
 /// If dst is not yet initialized, it will be allocated to the same
 /// size as specified by roi.  If roi is not defined it will be all
 /// of dst, if dst is defined, or all of src, if dst is not yet defined.
 /// In-place operations (dst == src) are supported.
 ///
-/// If unpremult is true, unpremultiply before color conversion, then
-/// premultiply after the color conversion.  You may want to use this
-/// flag if your image contains an alpha channel.
+/// If unpremult is true, divide the RGB channels by alpha (if it exists and
+/// is nonzero) before color conversion, then re-multiply by alpha after the
+/// after the color conversion. Passing unpremult=false skips this step,
+/// which may be desirable if you know that the image is "unassociated alpha"
+/// (a.k.a. "not pre-multiplied colors").
 ///
 /// Return true on success, false on error (with an appropriate error
 /// message set in dst).
 bool OIIO_API ociodisplay (ImageBuf &dst, const ImageBuf &src,
                         string_view display, string_view view,
                         string_view from="", string_view looks="",
-                        bool unpremult=false,
+                        bool unpremult=true,
                         string_view key="", string_view value="",
                         ColorConfig *colorconfig=NULL,
                         ROI roi=ROI::All(), int nthreads=0);
@@ -1061,15 +1073,17 @@ bool OIIO_API ociodisplay (ImageBuf &dst, const ImageBuf &src,
 /// size as specified by roi.  If roi is not defined it will be all
 /// of dst, if dst is defined, or all of src, if dst is not yet defined.
 ///
-/// If unpremult is true, unpremultiply before color conversion, then
-/// premultiply after the color conversion.  You may want to use this
-/// flag if your image contains an alpha channel. 
+/// If unpremult is true, divide the RGB channels by alpha (if it exists and
+/// is nonzero) before color conversion, then re-multiply by alpha after the
+/// after the color conversion. Passing unpremult=false skips this step,
+/// which may be desirable if you know that the image is "unassociated alpha"
+/// (a.k.a. "not pre-multiplied colors").
 ///
 /// Return true on success, false on error (with an appropriate error
 /// message set in dst).
 bool OIIO_API ociofiletransform (ImageBuf &dst, const ImageBuf &src,
                                  string_view name,
-                                 bool unpremult=false, bool inverse=false,
+                                 bool unpremult=true, bool inverse=false,
                                  ColorConfig *colorconfig=NULL,
                                  ROI roi=ROI::All(), int nthreads=0);
 
@@ -1154,6 +1168,12 @@ struct OIIO_API PixelStats {
     std::vector<imagesize_t> infcount;
     std::vector<imagesize_t> finitecount;
     std::vector<double> sum, sum2;  // for intermediate calculation
+    OIIO::spin_mutex mutex;   // in case you need to lock it
+
+    PixelStats () {}
+    PixelStats (int nchannels) { reset(nchannels); }
+    void reset (int nchannels);
+    void merge (const PixelStats &p);
 };
 
 
@@ -1959,7 +1979,7 @@ bool OIIO_API render_text (ImageBuf &dst, int x, int y, string_view text,
                            int shadow = 0,
                            ROI roi = ROI::All(), int nthreads = 0);
 
-// Old style (pre-1.8) -- will eventually be deprecated.
+// DEPRECATED: Old style (pre-1.8) -- will eventually be deprecated.
 bool OIIO_API render_text (ImageBuf &dst, int x, int y, string_view text,
                            int fontsize, string_view fontname,
                            const float *textcolor);

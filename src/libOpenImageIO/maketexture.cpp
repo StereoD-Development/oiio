@@ -55,6 +55,7 @@
 #include <OpenImageIO/imagebufalgo_util.h>
 #include <OpenImageIO/thread.h>
 #include <OpenImageIO/filter.h>
+#include "imageio_pvt.h"
 
 #ifdef USE_BOOST_REGEX
 # include <boost/regex.hpp>
@@ -430,7 +431,7 @@ lightprobe_to_envlatl (ImageBuf &dst, const ImageBuf &src, bool y_is_up,
 
 
 
-// compute slopes in s,t space using a Sobel gradient filter
+// compute slopes in pixel space using a Sobel gradient filter
 template<class SRCTYPE>
 static void
 sobel_gradient (const ImageBuf &src, const ImageBuf::Iterator<float> &dstpix,
@@ -455,8 +456,8 @@ sobel_gradient (const ImageBuf &src, const ImageBuf::Iterator<float> &dstpix,
             *h = srcval;
     }
 
-    *dh_ds = *dh_ds * src.spec().width  / 8.0f ; // sobel normalization
-    *dh_dt = *dh_dt * src.spec().height / 8.0f ;
+    *dh_ds = *dh_ds  / 8.0f ; // sobel normalization
+    *dh_dt = *dh_dt  / 8.0f ;
 }
 
 
@@ -1038,6 +1039,8 @@ make_texture_impl (ImageBufAlgo::MakeTextureMode mode,
         mode = ImageBufAlgo::MakeTxTexture;
         src = bumpslopes;
     }
+    double misc_time_2 = alltime.lap();
+    STATUS ("misc2", misc_time_2);
 
     // Some things require knowing a bunch about the pixel statistics.
     bool constant_color_detect = configspec.get_int_attribute("maketx:constant_color_detect");
@@ -1045,8 +1048,11 @@ make_texture_impl (ImageBufAlgo::MakeTextureMode mode,
     bool compute_average_color = configspec.get_int_attribute("maketx:compute_average", 1);
     ImageBufAlgo::PixelStats pixel_stats;
     bool compute_stats = (constant_color_detect || opaque_detect || compute_average_color);
-    if (compute_stats)
+    if (compute_stats) {
         ImageBufAlgo::computePixelStats (pixel_stats, *src);
+    }
+    double stat_pixelstatstime = alltime.lap();
+    STATUS ("pixelstats", stat_pixelstatstime);
 
     // If requested - and we're a constant color - make a tiny texture instead
     // Only safe if the full/display window is the same as the data window.
@@ -1315,8 +1321,8 @@ make_texture_impl (ImageBufAlgo::MakeTextureMode mode,
         }
     }
 
-    double misc_time_2 = alltime.lap();
-    STATUS ("misc2", misc_time_2);
+    double misc_time_3 = alltime.lap();
+    STATUS ("misc2b", misc_time_3);
 
     // Color convert the pixels, if needed, in place.  If a color
     // conversion is required we will promote the src to floating point
@@ -1427,8 +1433,8 @@ make_texture_impl (ImageBufAlgo::MakeTextureMode mode,
     }
     std::string filtername = configspec.get_string_attribute ("maketx:filtername", "box");
 
-    double misc_time_3 = alltime.lap(); 
-    STATUS ("misc3", misc_time_3);
+    double misc_time_4 = alltime.lap(); 
+    STATUS ("misc3", misc_time_4);
 
     std::shared_ptr<ImageBuf> toplevel;  // Ptr to top level of mipmap
     if (! do_resize && dstspec.format == src->spec().format) {
@@ -1577,8 +1583,8 @@ make_texture_impl (ImageBufAlgo::MakeTextureMode mode,
 
     maketx_merge_spec (dstspec, configspec);
 
-    double misc_time_4 = alltime.lap();
-    STATUS ("misc4", misc_time_4);
+    double misc_time_5 = alltime.lap();
+    STATUS ("misc4", misc_time_5);
 
     // Write out, and compute, the mipmap levels for the speicifed image
     bool nomipmap = configspec.get_int_attribute ("maketx:nomipmap") != 0;
@@ -1613,11 +1619,12 @@ make_texture_impl (ImageBufAlgo::MakeTextureMode mode,
         outstream << Strutil::format ("  file write:      %5.2f\n", stat_writetime);
         outstream << Strutil::format ("  initial resize:  %5.2f\n", stat_resizetime);
         outstream << Strutil::format ("  hash:            %5.2f\n", stat_hashtime);
+        outstream << Strutil::format ("  pixelstats:      %5.2f\n", stat_pixelstatstime);
         outstream << Strutil::format ("  mip computation: %5.2f\n", stat_miptime);
         outstream << Strutil::format ("  color convert:   %5.2f\n", stat_colorconverttime);
-        outstream << Strutil::format ("  unaccounted:     %5.2f  (%5.2f %5.2f %5.2f %5.2f)\n",
+        outstream << Strutil::format ("  unaccounted:     %5.2f  (%5.2f %5.2f %5.2f %5.2f %5.2f)\n",
                                       all-stat_readtime-stat_writetime-stat_resizetime-stat_hashtime-stat_miptime,
-                                      misc_time_1, misc_time_2, misc_time_3, misc_time_4);
+                                      misc_time_1, misc_time_2, misc_time_3, misc_time_4, misc_time_5);
         outstream << Strutil::format ("maketx peak memory used: %s\n",
                                       Strutil::memformat(peak_mem));
     }
@@ -1635,6 +1642,7 @@ ImageBufAlgo::make_texture (ImageBufAlgo::MakeTextureMode mode,
                             const ImageSpec &configspec,
                             std::ostream *outstream)
 {
+    pvt::LoggedTimer logtime("IBA::make_texture");
     return make_texture_impl (mode, NULL, filename, outputfilename,
                               configspec, outstream);
 }
@@ -1648,6 +1656,7 @@ ImageBufAlgo::make_texture (ImageBufAlgo::MakeTextureMode mode,
                             const ImageSpec &configspec,
                             std::ostream *outstream_ptr)
 {
+    pvt::LoggedTimer logtime("IBA::make_texture");
     return make_texture_impl (mode, NULL, filenames[0], outputfilename,
                               configspec, outstream_ptr);
 }
@@ -1661,6 +1670,7 @@ ImageBufAlgo::make_texture (ImageBufAlgo::MakeTextureMode mode,
                             const ImageSpec &configspec,
                             std::ostream *outstream)
 {
+    pvt::LoggedTimer logtime("IBA::make_texture");
     return make_texture_impl (mode, &input, "", outputfilename,
                               configspec, outstream);
 }

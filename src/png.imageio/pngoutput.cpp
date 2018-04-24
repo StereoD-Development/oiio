@@ -44,18 +44,18 @@ class PNGOutput final : public ImageOutput {
 public:
     PNGOutput ();
     virtual ~PNGOutput ();
-    virtual const char * format_name (void) const { return "png"; }
-    virtual int supports (string_view feature) const {
+    virtual const char * format_name (void) const override { return "png"; }
+    virtual int supports (string_view feature) const override {
         return (feature == "alpha");
     }
     virtual bool open (const std::string &name, const ImageSpec &spec,
-                       OpenMode mode=Create);
-    virtual bool close ();
+                       OpenMode mode=Create) override;
+    virtual bool close () override;
     virtual bool write_scanline (int y, int z, TypeDesc format,
-                                 const void *data, stride_t xstride);
+                                 const void *data, stride_t xstride) override;
     virtual bool write_tile (int x, int y, int z, TypeDesc format,
                              const void *data, stride_t xstride,
-                             stride_t ystride, stride_t zstride);
+                             stride_t ystride, stride_t zstride) override;
 
 private:
     std::string m_filename;           ///< Stash the filename
@@ -211,9 +211,9 @@ PNGOutput::close ()
         std::vector<unsigned char>().swap (m_tilebuffer);
     }
 
-    if (m_png)
-        PNG_pvt::finish_image (m_png);
-    PNG_pvt::destroy_write_struct (m_png, m_info);
+    if (m_png) {
+        PNG_pvt::finish_image (m_png, m_info);
+    }
 
     fclose (m_file);
     m_file = NULL;

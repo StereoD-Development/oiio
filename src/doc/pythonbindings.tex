@@ -249,6 +249,17 @@ as described by the \ROI.
 The total number of pixels in the region described by the \ROI.
 \apiend
 
+\apiitem{int ROI.{\ce contains} (x, y, z=0, ch=0)}
+\NEW % 1.9
+Returns {\cf True} if the ROI contains the coordinate.
+\apiend
+
+\apiitem{int ROI.{\ce contains} (other)}
+\NEW % 1.9
+Returns {\cf True} if the ROI {\cf other} is entirel contained within
+this ROI.
+\apiend
+
 
 \apiitem{ROI {\ce get_roi} (imagespec) \\
 ROI {\ce get_roi_full} (imagespec)}
@@ -406,6 +417,16 @@ The value of the indexed attribute.
         print "\t", s.extra_attribs[i].value
     print
 \end{code}
+\apiend
+
+\apiItem{Imagespec.{\ce roi}}
+\NEW % 1.9
+The ROI describing the pixel data window.
+\apiend
+
+\apiItem{ImageSpec.{\ce roi_full}}
+\NEW % 1.9
+The ROI describing the ``display window'' (or ``full size'').
 \apiend
 
 \apiitem{ImageSpec.{\ce set_format} (typedesc)}
@@ -1351,9 +1372,10 @@ Restore the \ImageBuf to the newly-constructed state of a blank, writeable
 \ImageBuf specified by an \ImageSpec.
 \apiend
 
-\apiitem{bool ImageBuf.{\ce read} (subimage=0, miplevel=0, force=False, convert=oiio.UNKNOWN)}
+\apiitem{bool ImageBuf.{\ce read} (subimage=0, miplevel=0, force=False, convert=oiio.UNKNOWN) \\
+bool ImageBuf.{\ce read} (subimage, miplevel, chbegin, chend, force, convert)}
 Explicitly read the image from the file (of a file-reading \ImageBuf), optionally
-specifying a particular subimage and MIP level.  If {\cf force} is {\cf True},
+specifying a particular subimage, MIP level, and channel range.  If {\cf force} is {\cf True},
 will force an allocation of memory and a full read (versus the default of
 relying on an underlying \ImageCache).  If {\cf convert} is not
 the default of {\cf UNKNOWN}, it will force the \ImageBuf to convert the
@@ -1362,7 +1384,8 @@ format or relying on the \ImageCache to make a data formatting decision).
 
 Note that a call to {\cf read()} is not necessary --- any \ImageBuf API call
 that accesses pixel values will trigger a file read if it has not yet been
-done.
+done. An explicit {\cf read()} is generally only needed to change the
+subimage or miplevel, or to force an in-buffer read or format conversion.
 
 The {\cf read()} method will return {\cf True} for success, or {\cf False}
 if the read could not be performed (in which case, a {\cf geterror()} call
@@ -2403,8 +2426,8 @@ float} for each color channel.
 
 Compute {\cf dst} = {\cf A * B + C} (channel-by-channel multiplication
 and addition). {\cf A}
-is an \ImageBuf, and {\cf B} and {\cf C} may be both \ImageBuf, both
-{\cf float} (scaling all channels) or a both tuples giving a {\cf float} for
+is an \ImageBuf, and {\cf B} and {\cf C} may each be \ImageBuf,
+{\cf float} (scaling all channels) or a tuple giving a {\cf float} for
 each color channel.
 
 \smallskip
@@ -3063,7 +3086,7 @@ corresponding region of {\cf src} using the ``unsharp mask'' technique.
 \label{sec:iba:py:color}
 
 \apiitem{bool ImageBufAlgo.{\ce colorconvert} (dst, src, from, to,
-  unpremult=False, \\
+  unpremult=True, \\
   \bigspc\bigspc context_key="", context_value="", \\
   \bigspc\bigspc  colorconfig="", roi=ROI.All, nthreads=0) \\
 }
@@ -3078,13 +3101,13 @@ are supported.
 \begin{code}
     Src = ImageBuf ("tahoe.jpg")
     Dst = ImageBuf ()
-    ImageBufAlgo.colorconvert (Dst, Src, "vd8", "lnf")
+    ImageBufAlgo.colorconvert (Dst, Src, "sRGB", "linear")
 \end{code}
 \apiend
 
 
 \apiitem{bool ImageBufAlgo.{\ce ociolook} (dst, src, looks, from, to,  \\
-  \bigspc\bigspc  inverse=False, unpremult=False, \\
+  \bigspc\bigspc  inverse=False, unpremult=True, \\
   \bigspc\bigspc context_key="", context_value="", colorconfig="", \\
   \bigspc\bigspc roi=ROI.All, nthreads=0)}
 \index{ImageBufAlgo!ociolook} \indexapi{ociolook}
@@ -3098,14 +3121,14 @@ are supported.
 \begin{code}
     Src = ImageBuf ("tahoe.jpg")
     Dst = ImageBuf ()
-    ImageBufAlgo.ociolook (Dst, Src, "look", "vd8", "lnf", False, False,
+    ImageBufAlgo.ociolook (Dst, Src, "look", "vd8", "lnf",
                             context_key="SHOT", context_value="pe0012")
 \end{code}
 \apiend
 
 
 \apiitem{bool ImageBufAlgo.{\ce ociodisplay} (dst, src, display, view, \\
-  \bigspc\bigspc from=None, looks=None, unpremult=False, \\
+  \bigspc\bigspc from=None, looks=None, unpremult=True, \\
   \bigspc\bigspc context_key="", context_value="", colorconfig="", \\
   \bigspc\bigspc roi=ROI.All, nthreads=0)}
 \index{ImageBufAlgo!ociodisplay} \indexapi{ociodisplay}
@@ -3119,8 +3142,27 @@ are supported.
 \begin{code}
     Src = ImageBuf ("tahoe.exr")
     Dst = ImageBuf ()
-    ImageBufAlgo.ociodisplay (Dst, Src, "sRGB", "Film", "lnf", False,
+    ImageBufAlgo.ociodisplay (Dst, Src, "sRGB", "Film", "lnf",
                               context_key="SHOT", context_value="pe0012")
+\end{code}
+\apiend
+
+
+\apiitem{bool ImageBufAlgo.{\ce ociofiletransform} (dst, src, name, \\
+  \bigspc\bigspc unpremult=True, invert=False, colorconfig="", \\
+  \bigspc\bigspc roi=ROI.All, nthreads=0)}
+\index{ImageBufAlgo!ociofiletransform} \indexapi{ociofiletransform}
+Copy pixels from {\cf src} to {\cf dst} (within the ROI), while
+applying an OpenColorIO ``file'' transform to the pixel values.
+In-place operations ({\cf dst} and {\cf src} being the same image)
+are supported.
+
+\smallskip
+\noindent Examples:
+\begin{code}
+    Src = ImageBuf ("tahoe.exr")
+    Dst = ImageBuf ()
+    ImageBufAlgo.ociofiletransform (Dst, Src, "foottransform.csp")
 \end{code}
 \apiend
 

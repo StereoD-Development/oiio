@@ -156,7 +156,11 @@ Oiiotool::clear_options ()
     autocc = false;
     nativeread = false;
     cachesize = 4096;
-    autotile = 4096;
+    autotile = 0;   // was: 4096
+    // FIXME: Turned off autotile by default Jan 2018 after thinking that
+    // it was possible to deadlock when doing certain parallel IBA functions
+    // in combination with autotile. When the deadlock possibility is fixed,
+    // maybe we'll turn it back to on by default.
     frame_padding = 0;
     full_command_line.clear ();
     printinfo_metamatch.clear ();
@@ -1757,6 +1761,7 @@ public:
         }
     virtual void option_defaults () {
         options["strict"] = "1";
+        options["unpremult"] = "0";
     }
     virtual bool setup () {
         if (fromspace == tospace) {
@@ -1773,8 +1778,12 @@ public:
         string_view contextkey = options["key"];
         string_view contextvalue = options["value"];
         bool strict = Strutil::from_string<int>(options["strict"]);
+        bool unpremult = Strutil::from_string<int>(options["unpremult"]);
+        if (unpremult && img[1]->spec().get_int_attribute("oiio:UnassociatedAlpha") && img[1]->spec().alpha_channel >= 0) {
+            ot.warning (opname(), "Image appears to already be unassociated alpha (un-premultiplied color), beware double unpremult. Don't use --unpremult and also --colorconvert:unpremult=1.");
+        }
         bool ok = ImageBufAlgo::colorconvert (*img[0], *img[1],
-                                              fromspace, tospace, false,
+                                              fromspace, tospace, unpremult,
                                               contextkey, contextvalue,
                                               &ot.colorconfig);
         if (!ok && !strict) {
@@ -1818,6 +1827,7 @@ public:
     virtual void option_defaults () {
         options["from"] = "current";
         options["to"] = "current";
+        options["unpremult"] = "0";
     }
     virtual int impl (ImageBuf **img) {
         string_view lookname = args[1];
@@ -1826,12 +1836,13 @@ public:
         string_view contextkey = options["key"];
         string_view contextvalue = options["value"];
         bool inverse = Strutil::from_string<int> (options["inverse"]);
+        bool unpremult = Strutil::from_string<int>(options["unpremult"]);
         if (fromspace == "current" || fromspace == "")
             fromspace = img[1]->spec().get_string_attribute ("oiio:Colorspace", "Linear");
         if (tospace == "current" || tospace == "")
             tospace = img[1]->spec().get_string_attribute ("oiio:Colorspace", "Linear");
         return ImageBufAlgo::ociolook (*img[0], *img[1], lookname,
-                                       fromspace, tospace, false, inverse,
+                                       fromspace, tospace, unpremult, inverse,
                                        contextkey, contextvalue,
                                        &ot.colorconfig);
     }
@@ -1847,6 +1858,7 @@ public:
         : OiiotoolOp (ot, opname, argc, argv, 1) { }
     virtual void option_defaults () {
         options["from"] = "current";
+        options["unpremult"] = "0";
     }
     virtual int impl (ImageBuf **img) {
         string_view displayname  = args[1];
@@ -1855,12 +1867,13 @@ public:
         string_view contextkey   = options["key"];
         string_view contextvalue = options["value"];
         bool override_looks = options.find("looks") != options.end();
+        bool unpremult = Strutil::from_string<int>(options["unpremult"]);
         if (fromspace == "current" || fromspace == "")
             fromspace = img[1]->spec().get_string_attribute ("oiio:Colorspace", "Linear");
         return ImageBufAlgo::ociodisplay (*img[0], *img[1], displayname,
                              viewname, fromspace,
                              override_looks ? options["looks"] : std::string(""),
-                             false, contextkey, contextvalue, &ot.colorconfig);
+                             unpremult, contextkey, contextvalue, &ot.colorconfig);
     }
 };
 
@@ -1872,12 +1885,15 @@ class OpOcioFileTransform : public OiiotoolOp {
 public:
     OpOcioFileTransform (Oiiotool &ot, string_view opname, int argc, const char *argv[])
         : OiiotoolOp (ot, opname, argc, argv, 1) { }
-    virtual void option_defaults () { }
+    virtual void option_defaults () {
+        options["unpremult"] = "0";
+    }
     virtual int impl (ImageBuf **img) {
         string_view name = args[1];
         bool inverse = Strutil::from_string<int> (options["inverse"]);
+        bool unpremult = Strutil::from_string<int>(options["unpremult"]);
         return ImageBufAlgo::ociofiletransform (*img[0], *img[1], name,
-                                       false, inverse, &ot.colorconfig);
+                                                inverse, unpremult, &ot.colorconfig);
     }
 };
 
@@ -2500,8 +2516,33 @@ BINARY_IMAGE_COLOR_OP (absdiffc, ImageBufAlgo::absdiff, 0);
 BINARY_IMAGE_COLOR_OP (powc, ImageBufAlgo::pow, 1.0f);
 
 UNARY_IMAGE_OP (abs, ImageBufAlgo::abs);
-UNARY_IMAGE_OP (unpremult, ImageBufAlgo::unpremult);
-UNARY_IMAGE_OP (premult, ImageBufAlgo::premult);
+
+
+
+class OpPremult : public OiiotoolOp {
+public:
+    OpPremult (Oiiotool &ot, string_view opname, int argc, const char *argv[])
+        : OiiotoolOp (ot, opname, argc, argv, 1) {}
+    virtual int impl (ImageBuf **img) {
+        return ImageBufAlgo::premult (*img[0], *img[1]);
+    }
+};
+OP_CUSTOMCLASS (premult, OpPremult, 1);
+
+
+
+class OpUnpremult : public OiiotoolOp {
+public:
+    OpUnpremult (Oiiotool &ot, string_view opname, int argc, const char *argv[])
+        : OiiotoolOp (ot, opname, argc, argv, 1) {}
+    virtual int impl (ImageBuf **img) {
+        if (img[1]->spec().get_int_attribute("oiio:UnassociatedAlpha") && img[1]->spec().alpha_channel >= 0) {
+            ot.warning (opname(), "Image appears to already be unassociated alpha (un-premultiplied color), beware double unpremult.");
+        }
+        return ImageBufAlgo::unpremult (*img[0], *img[1]);
+    }
+};
+OP_CUSTOMCLASS (unpremult, OpUnpremult, 1);
 
 
 
@@ -4933,6 +4974,7 @@ print_help_end (const ArgParse &ap, std::ostream &out)
 
     // debugging color space names
     std::stringstream s;
+    s << "Color configuration: " << ot.colorconfig.configname() << "\n";
     s << "Known color spaces: ";
     const char *linear = ot.colorconfig.getColorSpaceNameByRole("linear");
     for (int i = 0, e = ot.colorconfig.getNumColorSpaces();  i < e;  ++i) {
@@ -5155,7 +5197,7 @@ getargs (int argc, char *argv[])
                 "--create %@ %s %d", action_create, NULL, NULL,
                         "Create a blank image (args: geom, channels)",
                 "--pattern %@ %s %s %d", action_pattern, NULL, NULL, NULL,
-                        "Create a patterned image (args: pattern, geom, channels). Patterns: black, fill, checker, noise",
+                        "Create a patterned image (args: pattern, geom, channels). Patterns: black, constant, fill, checker, noise",
                 "--kernel %@ %s %s", action_kernel, NULL, NULL,
                         "Create a centered convolution kernel (args: name, geom)",
                 "--capture %@", action_capture, NULL,
@@ -5285,13 +5327,13 @@ getargs (int argc, char *argv[])
                 "--tocolorspace %@ %s", action_tocolorspace, NULL,
                     "Convert the current image's pixels to a named color space",
                 "--colorconvert %@ %s %s", action_colorconvert, NULL, NULL,
-                    "Convert pixels from 'src' to 'dst' color space (options: key=, value=)",
+                    "Convert pixels from 'src' to 'dst' color space (options: key=, value=, unpremult=)",
                 "--ociolook %@ %s", action_ociolook, NULL,
-                    "Apply the named OCIO look (options: from=, to=, inverse=, key=, value=)",
+                    "Apply the named OCIO look (options: from=, to=, inverse=, key=, value=, unpremult=)",
                 "--ociodisplay %@ %s %s", action_ociodisplay, NULL, NULL,
-                    "Apply the named OCIO display and view (options: from=, looks=, key=, value=)",
+                    "Apply the named OCIO display and view (options: from=, looks=, key=, value=, unpremult=)",
                 "--ociofiletransform %@ %s", action_ociofiletransform, NULL,
-                    "Apply the named OCIO filetransform (options: inverse=)",
+                    "Apply the named OCIO filetransform (options: inverse=, unpremult=)",
                 "--unpremult %@", action_unpremult, NULL,
                     "Divide all color channels of the current image by the alpha to \"un-premultiply\"",
                 "--premult %@", action_premult, NULL,
@@ -5329,7 +5371,7 @@ handle_sequence (int argc, const char **argv)
     // '%v' or '%V' characters.  Any found indicate that there are numeric
     // range or wildcards to deal with.  Also look for --frames,
     // --framepadding and --views options.
-#define ONERANGE_SPEC "[0-9]+(-[0-9]+((x|y)-?[0-9]+)?)?"
+#define ONERANGE_SPEC "-?[0-9]+(--?[0-9]+((x|y)-?[0-9]+)?)?"
 #define MANYRANGE_SPEC ONERANGE_SPEC "(," ONERANGE_SPEC ")*"
 #define VIEW_SPEC "%[Vv]"
 #define SEQUENCE_SPEC "((" MANYRANGE_SPEC ")?" "((#|@)+|(%[0-9]*d)))" "|" "(" VIEW_SPEC ")"
@@ -5363,6 +5405,8 @@ handle_sequence (int argc, const char **argv)
             ot.debug = true;
         else if ((strarg == "--frames" || strarg == "-frames") && a < argc-1) {
             framespec = argv[++a];
+            is_sequence = true;
+            // std::cout << "Frame range " << framespec << "\n";
         }
         else if ((strarg == "--framepadding" || strarg == "-framepadding")
                  && a < argc-1) {
@@ -5454,6 +5498,16 @@ handle_sequence (int argc, const char **argv)
         }
     }
 
+    if (! nfilenames && !framespec.empty()) {
+        // Frame sequence specified, but no wildcards used
+        Filesystem::enumerate_sequence (framespec, frame_numbers[0]);
+        nfilenames = frame_numbers[0].size();
+    }
+
+    // Make sure frame_numbers[0] has the canonical frame number list
+    if (sequence_args.size() && frame_numbers[0].empty())
+        frame_numbers[0] = frame_numbers[sequence_args[0]];
+
     // OK, now we just call getargs once for each item in the sequences,
     // substituting the i-th sequence entry for its respective argument
     // every time.
@@ -5469,7 +5523,7 @@ handle_sequence (int argc, const char **argv)
         }
 
         ot.clear_options (); // Careful to reset all command line options!
-        ot.frame_number = frame_numbers[sequence_args[0]][i];
+        ot.frame_number = frame_numbers[0][i];
         getargs (argc, (char **)&seq_argv[0]);
 
         ot.process_pending ();

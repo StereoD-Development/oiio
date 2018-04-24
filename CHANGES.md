@@ -10,6 +10,14 @@ Major new features and improvements:
   colored) pixels, null writer just returns. This can be used for
   benchmarking (to eliminate all actual file I/O time), "dry run" where you
   want to test without creating output files. #1778 (1.9.0)
+* New `maketx` option `--bumpslopes` specifically for converting bump maps,
+  saves additional channels containing slope distribution moments that can
+  be used in shaders for "bump to roughness" calculations. #1810 (1.9.2)
+* TIFF I/O of multiple scanlines or tiles at once (or whole images, as is
+  typical use case for oiiotool and maketx) is sped up by a large factor
+  on modern multicore systems. We've seen 10x or more faster oiiotool
+  performance for uint8 and uint16 TIFF files using "zip" (deflate)
+  compression, on modern 12-16 core machines. #1853 (1.9.2)
 
 Public API changes:
 * **Python binding overhaul**
@@ -40,6 +48,12 @@ Public API changes:
   only be used to pass into certain IBA functions). The color space names
   "rgb" and "default" are now understood to be synonyms for the default
   "linear" color space. #1788 (1.9.0)
+* `ImageBufAlgo::colorconvert` and various `ocio` transformations have
+  changed the default value of their `unpremult` parameter from `false` to
+  `true`, reflecting the fact that we believe this is almost always the more
+  correct choice. Also, if their input image is clearly marked as having
+  unasociated alpha already, they will not bracket the color conversion with
+  the requested unpremult/premult. #1864 (1.9.2)
 * Remove long-deprecated API calls:
     * ImageBuf::get_pixels/get_pixel_channels varieties deprecated since 1.6.
     * ImageBuf::set_deep_value_uint, deprecated since 1.7.
@@ -47,8 +61,37 @@ Public API changes:
     * ImageBufAlgo::colorconvert variety deprecated since 1.7.
     * ImageCache::clear, deprecated since 1.7.
     * ImageCache::add_tile variety deprecated since 1.6.
+* ROI new methods: contains()  #1874, #1878 (1.9.2)
+* `ImageBufAlgo::pixeladdr()` now takes an additional optional parameter,
+  the channel number. #1880 (1.9.2)
+* Global OIIO attribute "log_times" (which defaults to 0 but can be overridden
+  by setting the `OPENIMAGEIO_LOG_TIMES` environment variable), when nonzero,
+  instruments ImageBufAlgo functions to record the number of times they are
+  called and how much time they take to execute. A report of these times
+  can be retrieved as a string as the "timing_report" attribute, or it will
+  be printed to stdout automatically if the value of log_times is 2 or more
+  at the time that the application exits. #1885 (1.9.2)
+* Moved the definition of `ROI` from `imagebuf.h` to `imageio.h` and make
+  most of the methods `constexpr`. #1906 (1.9.2)
 
-Fixes, minor enhancements, and performance improvements:
+Performance improvements:
+* ImageBufAlgo::computePixelStats is now multithreaded and should improve by
+  a large factor when running on a machine with many cores. This is
+  particularly noticable for maketx. #1852 (1.9.2)
+* Color conversions are sped up by 50% for 4 channel float images, about
+  30% for other combinations of channels or data formats. #1868 (1.9.2)
+* ImageBuf::get_pixels() sped up by around 3x for the common case of the
+  image being fully in memory (the slower path is now only used for
+  ImageCache-based images). #1872 (1.9.2)
+* ImageBufAlgo::copy() and crop() sped up for in-memory buffers, by about
+  35-45% when copying between buffers of the same type, 2-4x when copying
+  between buffers of different data types. #1877 (1.9.2)
+* ImageBufAlgo::over() when both buffers are in-memory, float, 4-channels,
+  sped up by about 2x. #1879 (1.9.2).
+* ImageBufAlgo::fill() of a constant color sped up by 1.5-2.5x (depending
+  on the data type involved). #1886 (1.9.2)
+
+Fixes and feature enhancements:
 * oiiotool
     * Improved logic for propagating the pixel data format through
       multiple operations, especially for files with multiple subimages.
@@ -58,18 +101,74 @@ Fixes, minor enhancements, and performance improvements:
       to "overwrite" a file (i.e. `oiiotool in.tif ... -o out.tif`) without
       problematic situations where the file is truncated or overwritten
       before the reading is complete. #1797 (1.8.7/1.9.1)
-* ImageCache/TextureSystem:
+    * `--help` prints important usage tips that explain command parsing,
+      syntax of optional modifiers, and the path to PDF docs. #1811 (1.9.2)
+    * `--colormap` has new  maps "inferno", "magma", "plasma", "viridis",
+      which are perceptually uniform, monotonically increasing luminance,
+      look good converted to greyscale, and usable by people with color
+      blindness. #1820 (1.9.2)
+    * oiiotool no longer enables autotile by default. #1856 (1.9.2)
+    * `--colorconvert`, `--tocolorspace`, and all of the `--ocio` commands
+      now take an optional modifier `:unpremult=1` which causes the color
+      conversion to be internally bracketed by unpremult/premult steps (if
+      the image has alpha and is not already marked as having unassociated
+      alpha). You should therefore prefer `--colorconvert:unpremult=1 from to`
+      rather than the more complex `--unpremult --colorconvert from to -premult`.
+      #1864 (1.9.2)
+    * `--autocc` will also cause unpremult/premult to bracket any color
+      transformations it does automatically for read and write (if the image
+      has alpha and does not appear to already be unassociated). #1864 (1.9.2)
+    * `--help` prints the name of the OCIO color config file. #1869 (1.9.2)
+    * Frame sequence wildcard improvements: fix handling of negative frame
+      numbers and ranges, also the `--frames` command line option is not
+      enough to trigger a loop over those frame numbers, even if no other
+      arguments appear to have wildcard structure. #1894 (1.8.10/1.9.2)
+* ImageBufAlgo:
+    * `color_map()` new  maps "inferno", "magma", "plasma", "viridis".
+      #1820 (1.9.2)
+    * Across many functions, improve channel logic when combining an image
+      with alpha with another image without alpha. #1827 (1.9.2)
+    * `mad()` now takes an `img*color+img` variety. (Previously it
+       supported `img*img+img` and `img*color+color`.) #1866 (1.9.2)
+* ImageBuf:
+    * Bug fixed in IB::copy() of rare types. #1829 (1.9.2)
+* ImageCache/TextureSystem/maketx:
     * Improved stats on how long we wait for ImageInput mutexes.
       #1779 (1.9.0/1.8.6)
     * Improved performance of IC/TS tile and file caches under heavy
       contention from many threads. #1780 (1.9.0)
     * Increased the default `max_tile_channels` limit from 5 to 6.
       #1803 (1.9.1)
+    * maketx: improved image hashing to avoid some (extremely rare) possible
+      hash collisions. #1819 (1.9.2)
+    * IC/TS performance improvements by changing the underlying hash table
+      implementation. #1823,1824,1825,1826,1830 (1.9.2)
 * All string->numeric parsing and numeric->string formatting is now
   locale-independent and always uses '.' as decimal marker. #1796 (1.9.0)
+* Python Imagebuf.get_pixels and set_pixels bugs fixed, in the varieties
+  that take an ROI to describe the region. #1802 (1.9.2)
+* More robust parsing of XMP metadata for unknown metadata names.
+  #1816 (1.9.2/1.8.7)
+* Field3d: Prevent crashes when open fails. #1848 (1.9.2/1.8.8)
+* OpenEXR: gracefully detect and reject files with subsampled channels,
+  which is a rarely-to-never-used OpenEXR feature that we don't support
+  properly. #1849 (1.9.2/1.8.8)
+* PSD:
+    * Fix parse issue of layer mask data. #1777 (1.9.2)
+* RAW:
+    * Add "raw:HighlightMode" configuration hint to control libraw's
+      handling of highlight mode processing. #1851
+    * Important bug fix when dealing with rotated (and vertical) images,
+      which were not being re-oriented properly and could get strangely
+      scrambled. #1854 (1.9.2/1.8.9)
+* TIFF:
+    * Improve performance of TIFF scanline output. #1833 (1.9.2)
+    * Bug fix: read_tile() and read_tiles() input of un-premultiplied tiles
+      botched the "shape" of the tile data array. #1907 (1.9.2/1.8.10)
+* zfile: more careful gzopen on Windows that could crash when given bogus
+  filename. #1839 (1.9.2/1.8.8)
 
 Build/test system improvements:
-* testtex: make the "thread workout" cases all honor `--handle`. #1778 (1.9.0)
 * Fixes for Windows build. #1793, #1794 (1.9.0/1.8.6)
 * Fix build bug where if the makefile wrapper got `CODECOV=0`, it would
   force a "Debug" build (required for code coverage tests) even though code
@@ -79,28 +178,149 @@ Build/test system improvements:
   (1.8.6/1.9.1)
 * Build: Boost.Python is no longer a dependency, but `pybind11` is. If
   not found on the system, it will be automatically downloaded. #1801 (1.9.1)
+* Time for a multi-core build of OIIO is reduced by ~40% by refactoring some
+  extra big modules into more bite-sized pieces. #1806 (1.9.2)
+* testtex:
+    * Make the "thread workout" cases all honor `--handle`. #1778 (1.9.0)
+    * Only prints detailed stats if `-v` is used, and new option
+      `--invalidate` will invalidate the cache when starting each
+      threadtimes trial. #1828 (1.9.2)
+    * New `--anisoratio` lets you choose anisotropic shape for thread
+      working tests, and make thread_workout samples twice as big to be more
+      typical by interpolating mip levels. #1840 (1.9.2)
+    * TextureSystem stats are printed as well as ImageCache. #1840 (1.9.2)
+* iv no longer requires GLEW, using QOpenGLFunctions instead. #1840 (1.9.2)
+* DICOM: Fix dcmtk build errors on some platforms. Also, the minimum dcmtk
+  version we suport is 3.6.1. #1843 (1.9.2/1.8.8)
+* Build fixes for Hurd OS. #1850 (1.9.2/1.8.8)
+* Clean up leak sanitizer errors. #1855 (1.9.2)
+* On Unix/Linux, add explicit DL library dependency to libOpenImageIO.so
+  itself instead of only to the binaries and test utilities.
+  #1860 (1.9.2/1.8.8)
+* The build now bundles a sample OCIO config in testsuite/common so that we
+  can do OCIO-based unit tests. #1870 (1.9.2)
+* Properly find newer openjpeg 2.3. #1871 (1.9.2)
+* Fix testsuite to be Python 2/3 agnostic. #1891 (1.9.2)
+* Removed `USE_PYTHON3` build flag, which didn't do anything. #1891 (1.9.2)
+* Remove some lingering support for MSVS < 2013 (which we haven't advertised
+  as working anyway). #1887 (1.9.2)
+* Windows/MSVC build fix: use the `/bigobj` option on some large modules
+  that need it. #1900, #1902 (1.8.10/1.9.2)
 
 Developer goodies / internals:
+* argparse.h:
+    * Add pre- and post-option help printing callbacks. #1811 (1.9.2)
+    * Changed to PIMPL to hide implementation from the public headers.
+      Also modernized internals, no raw new/delete. #1858 (1.9.2)
 * array_view.h: added begin(), end(), cbegin(), cend() methods, and new
   constructors from pointer pairs and from std::array. (1.9.0/1.8.6)
-* fmath.h: Now defines preprocessor symbol `OIIO_FMATH_H` so other files can
-  easily detect if it has been included. (1.9.0/1.8.6)
-* paramlist.h: The ParamValue class has added get_int_indexed() and
-  get_float_indexed() methods. #1773 (1.9.0/1.8.6)
-* simd.h: Fixed build break when AVX512VL is enabled. #1781 (1.9.0/1.8.6)
+* color.h: add guards to make this header safe for Cuda compilation.
+  #1905 (1.9.2/1.8.10)
+* fmath.h:
+    * Now defines preprocessor symbol `OIIO_FMATH_H` so other files can
+      easily detect if it has been included. (1.9.0/1.8.6)
+    * Modify to allow Cuda compilation/use of this header. #1888,#1896
+     (1.9.2/1.8.10)
+* hash.h: add guards to make this header safe for Cuda compilation.
+  #1905 (1.9.2/1.8.10)
+* parallel.h:
+    * `parallel_options` passed to many functions. #1807 (1.9.2)
+    * More careful avoidance of threads not recursively using the thread
+      pool (which could lead to deadlocks). #1807 (1.9.2)
+    * Internals refactor of task_set #1883 (1.9.2).
+    * Make the thread pool better behaved in times if pool congestion -- if
+      there are already way too many items in the task queue, the caller may
+      do the work itself rather than add to the end and have to wait too
+      long to get results. #1884 (1.9.2)
+* paramlist.h:
+    * ParamValue class has added get_int_indexed() and get_float_indexed()
+      methods. #1773 (1.9.0/1.8.6)
+    * ParamValue restructured to allow additional common data types to store
+      internally rather than requre an allocation. #1812 (1.9.2)
+    * New ParamList convenience methods: remove(), constains(),
+      add_or_replace(). #1813 (1.9.2)
+* simd.h:
+    * Fixed build break when AVX512VL is enabled. #1781 (1.9.0/1.8.6)
+    * Minor fixes especially for avx512. #1846 (1.9.2/1.8.8) #1873,#1893
+      (1.9.2)
 * string.h:
     * All string->numeric parsing and numeric->string formatting is now
       locale-independent and always uses '.' as decimal marker. #1796 (1.9.0)
     * New `Strutil::stof()`, `stoi()`, `stoui()`, `stod()` functions for
       easy parsing of strings to numbers. Also tests `Strutil::string_is_int()`
       and `string_is_float()`. #1796 (1.9.0)
-* thread.h: Reimplementaiton of `spin_rw_mutex` has much better performance
-  when many threads are accessing at once, especially if most of them are
-  reader threads. #1787 (1.9.0)
+    * New `to_string<>` utility template. #1814 (1.9.2)
+* thread.h:
+    * Reimplementaiton of `spin_rw_mutex` has much better performance when
+      many threads are accessing at once, especially if most of them are
+      reader threads. #1787 (1.9.0)
+    * task_set: add wait_for_task() method that waits for just one task in
+      the set to finish (versus wait() that waits for all). #1847 (1.9.2)
 * unittest.h: Made references to Strutil fully qualified in OIIO namespace,
   so that `unittest.h` can be more easily used outside of the OIIO codebase.
   #1791 (1.9.0)
+* Extensive use of C++11 `final` and `override` decorators of virtual
+  methods in our internals, especially ImageInput and ImageOutput.
+  #1904 (1.9.2)
 
+
+
+
+Release 1.8.10 (1 Apr 2018) -- compared to 1.8.9
+-------------------------------------------------
+* oiiotool frame sequence wildcard improvements: fix handling of negative
+  frame numbers and ranges, also the `--frames` command line option is not
+  enough to trigger a loop over those frame numbers, even if no other
+  arguments appear to have wildcard structure. #1894
+* TIFF bug fix: read_tile() and read_tiles() input of un-premultiplied tiles
+  botched the "shape" of the tile data array. #1907
+* Windows/MSVC build fix: use the `/bigobj` option on some large modules
+  that need it. #1900, #1902
+* fmath.h, hash.h, color.h: changes to make it friendly to Cuda compilation
+  (#1888, #1896, #1905).
+* fmath.h avx-512 improvements. #1893
+* testsuite is not Python 2/3 agnostic.
+
+Release 1.8.9 (1 Mar 2018) -- compared to 1.8.8
+-------------------------------------------------
+* Properly find newer openjpeg 2.3. #1871
+* Bug fix in IBA::copy where uninitialized dst image botched its ROI. #1876
+* RAW: Important bug fix when dealing with rotated (and vertical) images,
+  which were not being re-oriented properly and could get strangely
+  scrambled. #1854
+
+Release 1.8.8 (1 Feb 2018) -- compared to 1.8.7
+-------------------------------------------------
+* OpenEXR: gracefully detect and reject files with subsampled channels,
+  which is a rarely-to-never-used OpenEXR feature that we don't support
+  properly. #1849
+* Field3d: Prevent crashes when open fails. #1848
+* RAW: Add "raw:HighlightMode" configuration hint to control libraw's
+  handling of highlight mode processing. #1851
+* zfile: more careful gzopen on Windows that could crash when given bogus
+  filename. #1839
+* DICOM: Fix dcmtk build errors on some platforms. Also, the minimum dcmtk
+  version we suport is 3.6.1. #1843
+* simd.h: Minor fixes especially for avx512. #1846
+* iv: Drop GLEW and obsolete GL stuff from iv in favor of QOpenGLFunctions,
+  and fix broken pixelview text rendering. #1834
+* On Unix/Linux, add explicit DL library dependency to libOpenImageIO.so
+  itself instead of only to the binaries and test utilities. #1860
+* Build fixes for Hurd OS. #1850
+
+Release 1.8.7 (1 Jan 2018) -- compared to 1.8.6
+-------------------------------------------------
+* All string->numeric parsing and numeric->string formatting is now
+  locale-independent and always uses '.' as decimal marker. #1796
+* oiiotool outputs are now written to temporary files, then atomically moved
+  to the specified filename at the end. This makes it safe for oiiotool
+  to "overwrite" a file (i.e. `oiiotool in.tif ... -o out.tif`) without
+  problematic situations where the file is truncated or overwritten
+  before the reading is complete. #1797
+* Python bindings for ImageBuf.get_pixels and set_pixels fixed some bugs
+  when passed an ROI without a channel range specified. #1802
+* More robust parsing of XMP metadata for unknown metadata names. #1816
+* strutil.h now includes a to_string<> utility template. #1814
 
 Release 1.8.6 (1 Nov 2017) -- compared to 1.8.5
 -------------------------------------------------

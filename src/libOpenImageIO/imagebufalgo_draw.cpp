@@ -43,6 +43,7 @@
 #include <OpenImageIO/thread.h>
 #include <OpenImageIO/filesystem.h>
 #include <OpenImageIO/hash.h>
+#include "imageio_pvt.h"
 
 #ifdef USE_FREETYPE
 #include <ft2build.h>
@@ -57,10 +58,14 @@ template<typename T>
 static bool
 fill_const_ (ImageBuf &dst, const float *values, ROI roi=ROI(), int nthreads=1)
 {
-    ImageBufAlgo::parallel_image (roi, nthreads, [&](ROI roi){
-        for (ImageBuf::Iterator<T> p (dst, roi);  !p.done();  ++p)
-            for (int c = roi.chbegin;  c < roi.chend;  ++c)
-                p[c] = values[c];
+    ImageBufAlgo::parallel_image (roi, nthreads, [=,&dst](ROI roi){
+        // Do the data conversion just once, store locally.
+        T *tvalues = ALLOCA (T, roi.chend);
+        for (int i = roi.chbegin; i < roi.chend; ++i)
+            tvalues[i] = convert_type<float,T>(values[i]);
+        int nchannels = roi.nchannels();
+        for (ImageBuf::Iterator<T,T> p (dst, roi);  !p.done();  ++p)
+            memcpy ((T*)p.rawptr()+roi.chbegin, tvalues+roi.chbegin, nchannels*sizeof(T));
     });
     return true;
 }
@@ -107,6 +112,7 @@ fill_corners_ (ImageBuf &dst, const float *topleft, const float *topright,
 bool
 ImageBufAlgo::fill (ImageBuf &dst, const float *pixel, ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::fill");
     ASSERT (pixel && "fill must have a non-NULL pixel value pointer");
     if (! IBAprep (roi, &dst))
         return false;
@@ -121,6 +127,7 @@ bool
 ImageBufAlgo::fill (ImageBuf &dst, const float *top, const float *bottom,
                     ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::fill");
     ASSERT (top && bottom && "fill must have a non-NULL pixel value pointers");
     if (! IBAprep (roi, &dst))
         return false;
@@ -136,6 +143,7 @@ ImageBufAlgo::fill (ImageBuf &dst, const float *topleft, const float *topright,
                     const float *bottomleft, const float *bottomright,
                     ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::fill");
     ASSERT (topleft && topright && bottomleft && bottomright &&
             "fill must have a non-NULL pixel value pointers");
     if (! IBAprep (roi, &dst))
@@ -151,11 +159,15 @@ ImageBufAlgo::fill (ImageBuf &dst, const float *topleft, const float *topright,
 bool
 ImageBufAlgo::zero (ImageBuf &dst, ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::zero");
     if (! IBAprep (roi, &dst))
         return false;
     float *zero = ALLOCA(float,roi.chend);
     memset (zero, 0, roi.chend*sizeof(float));
-    return fill (dst, zero, roi, nthreads);
+    bool ok;
+    OIIO_DISPATCH_TYPES (ok, "zero", fill_const_, dst.spec().format,
+                         dst, zero, roi, nthreads);
+    return ok;
 }
 
 
@@ -179,6 +191,7 @@ ImageBufAlgo::render_point (ImageBuf &dst, int x, int y,
                             array_view<const float> color,
                             ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::render_point");
     if (! IBAprep (roi, &dst))
         return false;
 
@@ -305,6 +318,7 @@ ImageBufAlgo::render_line (ImageBuf &dst, int x1, int y1, int x2, int y2,
                            bool skip_first_point,
                            ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::render_line");
     if (! IBAprep (roi, &dst))
         return false;
 
@@ -366,6 +380,7 @@ ImageBufAlgo::render_box (ImageBuf &dst, int x1, int y1, int x2, int y2,
                           array_view<const float> color, bool fill,
                           ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::render_box");
     if (! IBAprep (roi, &dst))
         return false;
     if (int(color.size()) < roi.chend) {
@@ -436,6 +451,7 @@ ImageBufAlgo::checker (ImageBuf &dst, int width, int height, int depth,
                        int xoffset, int yoffset, int zoffset,
                        ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::checker");
     if (! IBAprep (roi, &dst))
         return false;
     bool ok;
@@ -549,6 +565,7 @@ ImageBufAlgo::noise (ImageBuf &dst, string_view noisetype,
                      float A, float B, bool mono, int seed,
                      ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::noise");
     if (! IBAprep (roi, &dst))
         return false;
     bool ok;
@@ -716,6 +733,7 @@ resolve_font (int fontsize, string_view font_, std::string &result)
 ROI
 ImageBufAlgo::text_size (string_view text, int fontsize, string_view font_)
 {
+    pvt::LoggedTimer logtime("IBA::text_size");
     ROI size;
 #ifdef USE_FREETYPE
     // Thread safety
@@ -790,6 +808,7 @@ ImageBufAlgo::render_text (ImageBuf &R, int x, int y, string_view text,
                            TextAlignX alignx, TextAlignY aligny,
                            int shadow, ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::render_text");
     if (R.spec().depth > 1) {
         R.error ("ImageBufAlgo::render_text does not support volume images");
         return false;

@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+from __future__ import print_function
 import os
 import glob
 import sys
@@ -45,6 +46,7 @@ refdir = "ref/"
 refdirlist = [ refdir ]
 parent = "../../../../../"
 test_source_dir = "../../../../testsuite/" + os.path.basename(os.path.abspath(srcdir))
+colorconfig_file = "../../../../testsuite/common/OpenColorIO/nuke-default/config.ocio"
 
 command = ""
 outputs = [ "out.txt" ]    # default
@@ -81,6 +83,14 @@ else :
         os.symlink (test_source_dir, "./data")
     if not os.path.exists("../common") :
         os.symlink ("../../../testsuite/common", "../common")
+
+
+# Disable this test on Travis when using leak sanitizer, because the error
+# condition makes a leak we can't stop, but that's ok.
+import os
+if (os.getenv("TRAVIS") and (os.getenv("SANITIZE") in ["leak","address"])
+    and os.path.exists(os.path.join (test_source_dir,"TRAVIS_SKIP_LSAN"))) :
+    sys.exit (0)
 
 
 ###########################################################################
@@ -233,7 +243,9 @@ def testtex_command (file, extraargs="") :
 
 # Construct a command that will run oiiotool and append its output to out.txt
 def oiiotool (args, silent=False, concat=True) :
-    cmd = (oiio_app("oiiotool") + " " + args)
+    cmd = (oiio_app("oiiotool") + " "
+           + "-colorconfig " + colorconfig_file + " "
+           + args)
     if not silent :
         cmd += " >> out.txt"
     if concat:
@@ -346,8 +358,10 @@ def runtest (command, outputs, failureok=0) :
                 os.system (diff_command (out, testfile, silent=False))
             if os.path.isfile("debug.log") and os.path.getsize("debug.log") :
                 print ("---   DEBUG LOG   ---\n")
+                #flog = open("debug.log", "r")
+                # print (flog.read())
                 with open("debug.log", "r") as flog :
-                    print flog.read()
+                    print (flog.read())
                 print ("--- END DEBUG LOG ---\n")
     return (err)
 
