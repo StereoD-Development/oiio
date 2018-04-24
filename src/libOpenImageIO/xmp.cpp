@@ -37,6 +37,7 @@
 #include <OpenImageIO/strutil.h>
 #include <OpenImageIO/fmath.h>
 #include <OpenImageIO/imageio.h>
+#include <OpenImageIO/tiffutils.h>
 
 extern "C" {
 #include "tiff.h"
@@ -113,6 +114,8 @@ static XMPtag xmptag [] = {
     { "tiff:Software", "Software", TypeDesc::STRING, TiffRedundant },
 
     { "exif:ColorSpace", "Exif:ColorSpace", TypeDesc::INT, ExifRedundant },
+    { "exif:PixelXDimension", "", TypeDesc::INT, ExifRedundant|TiffRedundant},
+    { "exif:PixelYDimension", "", TypeDesc::INT, ExifRedundant|TiffRedundant },
     { "exifEX:PhotographicSensitivity", "Exif:ISOSpeedRatings", TypeDesc::INT, ExifRedundant },
 
     { "xmp:CreateDate", "DateTime", TypeDesc::STRING, DateConversion|TiffRedundant },
@@ -274,7 +277,7 @@ add_attrib (ImageSpec &spec, const char *xmlname, const char *xmlvalue)
 #if DEBUG_XMP_READ
     std::cerr << "add_attrib " << xmlname << ": '" << xmlvalue << "'\n";
 #endif
-    std::string oiioname;
+    std::string oiioname = xmlname;
     TypeDesc oiiotype;
     int special = NothingSpecial;
 
@@ -321,9 +324,9 @@ add_attrib (ImageSpec &spec, const char *xmlname, const char *xmlvalue)
             bool dup = false;
             if (p) {
                 Strutil::split (*(const char **)p->data(), items, ";");
-                for (size_t item = 0;  item < items.size();  ++item) {
-                    items[item] = Strutil::strip (items[item]);
-                    dup |= (items[item] == xmlvalue);
+                for (auto& item : items) {
+                    item = Strutil::strip (item);
+                    dup |= (item == xmlvalue);
                 }
                 dup |= (xmlvalue == std::string(*(const char **)p->data()));
             }
@@ -611,9 +614,9 @@ encode_xmp_category (std::vector<std::pair<const XMPtag *,std::string> > &list,
             else if (control == XMP_AltList || control == XMP_BagList) {
                 std::vector<std::string> vals;
                 Strutil::split (val, vals, ";");
-                for (size_t i = 0;  i < vals.size();  ++i) {
-                    vals[i] = Strutil::strip (vals[i]);
-                    x += Strutil::format ("<rdf:li>%s</rdf:li>", vals[i]);
+                for (auto& val : vals) {
+                    val = Strutil::strip (val);
+                    x += Strutil::format ("<rdf:li>%s</rdf:li>", val);
                 }
             }
             else

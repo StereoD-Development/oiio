@@ -74,6 +74,7 @@ Other contributors (alphabetically):
 * John Haddon
 * Brian Hall
 * Jep Hill
+* Patrick Hodoul
 * Changlin Hsieh
 * Justin Israel
 * Thiago Ize
@@ -85,6 +86,7 @@ Other contributors (alphabetically):
 * Alexander Kuleshov
 * Nixon Kwok
 * Pete Larabell
+* LazyDodo
 * Michel Lerenard
 * Manuel Leonhardt
 * Matthew E. Levine
@@ -115,8 +117,10 @@ Other contributors (alphabetically):
 * Will Rosecrans
 * Ryen
 * Lukas Schrangl
+* Jonathan Scruggs
 * Alex Schworer
 * Aman Shah
+* Arkady Shapkin
 * Sergey Sharybin
 * Richard Shaw
 * Tim D. Smith
@@ -124,6 +128,7 @@ Other contributors (alphabetically):
 * Stefan Stavrev
 * Cliff Stein
 * Mariusz Szczepanczyk
+* Kazuki Takahashi
 * Blair Tennessy
 * Ott Tinn
 * Pino Toscano

@@ -29,7 +29,7 @@ the new \emph{current image}.
 Most other commands either alter the current image (replacing it with
 the alteration), or in some cases will pull more than one image off the
 stack (such as the current image and the next item on the stack) and
-then push a new image.
+then push a new result image onto the stack.
 
 \subsubsection*{Argument order matters!}
 
@@ -41,8 +41,9 @@ on the command line is extremely important. For example,
 \end{code}
 
 \noindent has the effect of reading \qkw{in.tif} (thus making it the
-\emph{current image}), resizing it (as the current image, and making the
-resized version the new current image), and then writing the new current
+\emph{current image}), resizing it (taking the original off the stack,
+and placing the resized result back on the stack),
+and then writing the new current
 image to the file \qkw{out.tif}.  Contrast that with the following
 subtly-incorrect command:
 
@@ -69,12 +70,18 @@ take one or more arguments (like {\cf --resize} or {\cf -o}):
 A few commands take optional modifiers for options that are so
 rarely-used or confusing that they should not be required arguments.
 In these cases, they are appended to the command name, after a colon
-(``{\cf :}''), and with a \emph{name}{\cf =}\emph{value} format.  As
+(``{\cf :}''), and with a \emph{name}{\cf =}\emph{value} format.  Multiple
+optional modifiers can be chained together, with colon separators. As
 an example:
 
-\smallskip
-\hspace{0.25in} {\cf oiiotool --capture:camera=1 -o out.tif}
-\smallskip
+\begin{code}
+       oiiotool in.tif --text:x=400:y=600:color=1,0,0 "Hello" -o out.tif
+                       \____/\____/\____/\__________/ \____/
+                         |     |     |        |         |
+          command -------+     |     |        |         +----- required argument
+                               |     |        |
+   optional modifiers ---------+-----+--------+
+\end{code}
 
 \subsubsection*{Frame sequences}
 \index{frame sequences}\index{wildcard}
@@ -738,7 +745,6 @@ are printed.
 \apiend
 
 \apiitem{{\ce --echo} {\rm \emph{message}}}
-\NEW % 1.8
 Prints the message to the console, at that point in the left-to-right
 execution of command line arguments.
 The message may contain expressions for substitution.
@@ -1144,12 +1150,14 @@ current image from the image stack, it merely saves a copy of it.
 {\cf autocrop=}\emph{int} & Enable or disable autocrop for
      this output image. \\
 {\cf autotrim=}\emph{int} & Enable or disable {\cf --autotrim} for
-     this output image. \index{autotrim} \\
+     this output image. \index{autotrim} \\[0.5ex]
 {\cf separate=}\emph{int} & \\
 {\cf contig=}\emph{int} & Set separate or contiguous planar configuration
-    for this output. \\
+    for this output. \\[0.5ex]
 {\cf\small fileformatname=}\emph{string} & Specify the desired output file
-  format, overriding any guess based on file name extension. \\
+  format, overriding any guess based on file name extension. \\[0.5ex]
+{\cf scanline=}{int} & If nonzero, force scanline output. \\
+{\cf tile=}\emph{int}{\cf x}\emph{int} &  Force tiling with given size. \\[0.5ex]
 {\cf all=}\emph{n} & Output all images currently on the stack using a
       pattern. See further explanation below.
 \end{tabular}
@@ -1432,7 +1440,6 @@ When set, this edits the command line inserted in the \qkw{Software} and
 \apiend
 
 \apiitem{\ce --eraseattrib {\rm \emph{pattern}}}
-\NEW % 1.8
 Removes any metadata whose name matches the regular expression \emph{pattern}.
 The pattern will be case insensitive.
 
@@ -1970,27 +1977,36 @@ weight of each channel in the sum.
 \apiend
 
 \apiitem{\ce --colormap {\rm \emph{mapname}}}
-\NEW % 1.8
 Creates an RGB color map based on the luminance of the input image. The
-{\cf mapname} may be one of:  \qkw{blue-red}, \qkw{spectrum}, and \qkw{heat}.
+{\cf mapname} may be one of: \qkw{magma}, \qkw{inferno}, \qkw{plasma},
+\qkw{viridis}, \qkw{blue-red}, \qkw{spectrum}, and \qkw{heat}.
 Or, {\cf mapname} may also be a comma-separated list of RGB triples, to form
 a custom color map curve.
 
+\NEW % 1.9
+Note that \qkw{magma}, \qkw{inferno}, \qkw{plasma}, \qkw{viridis} are
+perceptually uniform, strictly increasing in luminance, look good when
+converted to grayscale, and work for people with all types of
+colorblindness. These are all desirable qualities that are lacking in the
+other, older, crappier maps (blue-red, spectrum, and heat). Don't be fooled
+by the flashy \qkw{spectrum} colors --- it is an empirically bad color map
+compared to the preferred ones.
+
 \noindent Example:
 \begin{code}
-    oiiotool tahoe.jpg --colormap blue-red -o blue-red.jpg
+    oiiotool tahoe.jpg --colormap inferno -o inferno.jpg
+    oiiotool tahoe.jpg --colormap viridis -o viridis.jpg
     oiiotool tahoe.jpg --colormap spectrum -o spectrum.jpg
-    oiiotool tahoe.jpg --colormap heat -o heat.jpg
     oiiotool tahoe.jpg --colormap .25,.25,.25,0,.5,0,1,0,0 -o custom.jpg
 \end{code}
 
 \noindent \begin{tabular}{lllll}
 \includegraphics[width=0.9in]{figures/tahoe-small.jpg} &
-\includegraphics[width=0.9in]{figures/colormap-blue-red.jpg} &
+\includegraphics[width=0.9in]{figures/colormap-inferno.jpg} &
+\includegraphics[width=0.9in]{figures/colormap-viridis.jpg} &
 \includegraphics[width=0.9in]{figures/colormap-spectrum.jpg} &
-\includegraphics[width=0.9in]{figures/colormap-heat.jpg} &
 \includegraphics[width=0.9in]{figures/colormap-custom.jpg} \\
-original & red-blue & spectrum & heat & custom values \\
+original & inferno & viridis & spectrum & custom values \\
 \end{tabular}
 \apiend
 
@@ -3045,7 +3061,6 @@ channel.
 
 \apiitem{\ce --deepholdout}
 \index{composite}
-\NEW % 1.8
 Replace the \emph{two} top images with a new deep image that is the ``deep
 holdout'' of the first image by the second --- that is, the samples from
 the first image that are closer than the opaque frontier of the second

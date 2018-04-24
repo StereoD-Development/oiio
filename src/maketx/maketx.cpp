@@ -69,9 +69,7 @@ static bool shadowmode = false;
 static bool envlatlmode = false;
 static bool envcubemode = false;
 static bool lightprobemode = false;
-
-static ColorConfig colorconfig;
-
+static bool bumpslopesmode = false;
 
 
 
@@ -115,6 +113,7 @@ colorconvert_help_string ()
     "to the proper bit depth using the -d option. ";
     
     s += " (choices: ";
+    ColorConfig colorconfig;
     if (colorconfig.error() || colorconfig.getNumColorSpaces()==0) {
         s += "NONE";
     } else {
@@ -277,6 +276,8 @@ getargs (int argc, char *argv[], ImageSpec &configspec)
                   "--shadow", &shadowmode, "Create shadow map",
                   "--envlatl", &envlatlmode, "Create lat/long environment map",
                   "--lightprobe", &lightprobemode, "Create lat/long environment map from a light probe",
+                  "--bumpslopes", &bumpslopesmode, "Create a 6 channels bump-map with height, derivatives and square derivatives from an height or a normal map",
+            
 //                  "--envcube", &envcubemode, "Create cubic env map (file order: px, nx, py, ny, pz, nz) (UNIMP)",
                   "<SEPARATOR>", colortitle_help_string().c_str(),
                   "--colorconfig %s", &colorconfigname, "Explicitly specify an OCIO configuration file",
@@ -305,7 +306,7 @@ getargs (int argc, char *argv[], ImageSpec &configspec)
     }
 
     int optionsum = ((int)shadowmode + (int)envlatlmode + (int)envcubemode +
-                     (int)lightprobemode);
+                     (int)lightprobemode) + (int)bumpslopesmode;
     if (optionsum > 1) {
         std::cerr << "maketx ERROR: At most one of the following options may be set:\n"
                   << "\t--shadow --envlatl --envcube --lightprobe\n";
@@ -359,9 +360,9 @@ getargs (int argc, char *argv[], ImageSpec &configspec)
         configspec.attribute ("fovcot", fovcot);
     configspec.attribute ("planarconfig", separate ? "separate" : "contig");
     if (Mcam != Imath::M44f(0.0f))
-        configspec.attribute ("worldtocamera", TypeDesc::TypeMatrix, &Mcam);
+        configspec.attribute ("worldtocamera", TypeMatrix, &Mcam);
     if (Mscr != Imath::M44f(0.0f))
-        configspec.attribute ("worldtoscreen", TypeDesc::TypeMatrix, &Mscr);
+        configspec.attribute ("worldtoscreen", TypeMatrix, &Mscr);
     std::string wrapmodes = (swrap.size() ? swrap : wrap) + ',' + 
                             (twrap.size() ? twrap : wrap);
     configspec.attribute ("wrapmodes", wrapmodes);
@@ -448,6 +449,10 @@ main (int argc, char *argv[])
 {
     Timer alltimer;
 
+    // Globally force classic "C" locale, and turn off all formatting
+    // internationalization, for the entire maketx application.
+    std::locale::global (std::locale::classic());
+
     ImageSpec configspec;
     Filesystem::convert_native_arguments (argc, (const char **)argv);
     getargs (argc, argv, configspec);
@@ -466,6 +471,9 @@ main (int argc, char *argv[])
         mode = ImageBufAlgo::MakeTxEnvLatl;
     if (lightprobemode)
         mode = ImageBufAlgo::MakeTxEnvLatlFromLightProbe;
+    if (bumpslopesmode)
+        mode = ImageBufAlgo::MakeTxBumpWithSlopes;
+    
     bool ok = ImageBufAlgo::make_texture (mode, filenames[0],
                                           outputfilename, configspec,
                                           &std::cout);

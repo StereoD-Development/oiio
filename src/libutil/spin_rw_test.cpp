@@ -36,6 +36,7 @@
 #include <OpenImageIO/strutil.h>
 #include <OpenImageIO/sysutil.h>
 #include <OpenImageIO/timer.h>
+#include <OpenImageIO/benchmark.h>
 #include <OpenImageIO/argparse.h>
 #include <OpenImageIO/ustring.h>
 #include <OpenImageIO/unittest.h>
@@ -152,6 +153,7 @@ int main (int argc, char *argv[])
         std::cout << Strutil::format ("%2d\t%s\t%5.1fs, range %.1f\t(%d iters/thread)\n",
                                       nt, Strutil::timeintervalformat(t),
                                       t, range, its);
+        std::cout.flush();
         if (! wedge)
             break;    // don't loop if we're not wedging
     }

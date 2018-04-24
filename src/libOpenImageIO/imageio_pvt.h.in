@@ -96,14 +96,20 @@ const float *convert_to_float (const void *src, float *dst, int nvals,
 /// Turn contiguous float data into any format.  Return a pointer to the
 /// converted data (which may still point to src if no conversion was
 /// necessary).
-const void *convert_from_float (const float *src, void *dst, size_t nvals,
-                                long long quant_min, long long quant_max,
-                                TypeDesc format);
+const void *convert_from_float (const float *src, void *dst,
+                                size_t nvals, TypeDesc format);
 
 /// A version of convert_from_float that will break up big jobs with
 /// multiple threads.
 const void *parallel_convert_from_float (const float *src, void *dst,
                                          size_t nvals, TypeDesc format);
+
+/// Internal utility: Error checking on the spec -- if it contains texture-
+/// specific metadata but there are clues it's not actually a texture file
+/// written by maketx or `oiiotool -otex`, then assume these metadata are
+/// wrong and delete them. Return true if we think it's one of these
+/// incorrect files and it was fixed.
+bool check_texture_metadata_sanity (ImageSpec &spec);
 
 }  // namespace pvt
 

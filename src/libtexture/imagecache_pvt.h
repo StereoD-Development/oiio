@@ -36,6 +36,8 @@
 #ifndef OPENIMAGEIO_IMAGECACHE_PVT_H
 #define OPENIMAGEIO_IMAGECACHE_PVT_H
 
+#include <tsl/robin_map.h>
+
 #include <boost/version.hpp>
 #include <boost/thread/tss.hpp>
 #include <boost/container/flat_map.hpp>
@@ -48,6 +50,7 @@
 #include <OpenImageIO/hash.h>
 #include <OpenImageIO/imagebuf.h>
 #include <OpenImageIO/unordered_map_concurrent.h>
+#include <OpenImageIO/timer.h>
 
 
 OIIO_NAMESPACE_BEGIN
@@ -68,6 +71,8 @@ namespace pvt {
 // shadow maps!
 #define USE_SHADOW_MATRICES 0
 
+#define FILE_CACHE_SHARDS 64
+#define TILE_CACHE_SHARDS 128
 
 using boost::thread_specific_ptr;
 
@@ -315,12 +320,23 @@ public:
     /// number of errors so far, including this one, is a above the limit
     /// set for errors to print for each file.
     int errors_should_issue () const;
-    
+
+    /// Mark the file as "not broken"
+    void mark_not_broken ();
+
+    /// Mark the file as "broken" with an error message, and send the error
+    /// message to the imagecache.
+    void mark_broken (string_view error);
+
+    /// Return the error message that explains why the file is broken.
+    string_view broken_error_message () const { return m_broken_message; }
+
 private:
     ustring m_filename_original;    ///< original filename before search path
     ustring m_filename;             ///< Filename
     bool m_used;                    ///< Recently used (in the LRU sense)
     bool m_broken;                  ///< has errors; can't be used properly
+    std::string m_broken_message;   ///< Error message for why it's broken
     std::shared_ptr<ImageInput> m_input; ///< Open ImageInput, NULL if closed
     std::vector<SubimageInfo> m_subimages;  ///< Info on each subimage
     TexFormat m_texformat;          ///< Which texture format
@@ -344,6 +360,7 @@ private:
     atomic_ll m_redundant_bytesread;///< Redundant bytes read
     size_t m_timesopened;           ///< Separate times we opened this file
     double m_iotime;                ///< I/O time for this file
+    double m_mutex_wait_time;       ///< Wait time for m_input_mutex
     bool m_mipused;                 ///< MIP level >0 accessed
     volatile bool m_validspec;      ///< If false, reread spec upon open
     mutable int m_errors_issued;    ///< Errors issued for this file
@@ -369,7 +386,9 @@ private:
 
     /// Force the file to open, thread-safe.
     bool forceopen (ImageCachePerThreadInfo *thread_info) {
+        Timer input_mutex_timer;
         recursive_lock_guard guard (m_input_mutex);
+        m_mutex_wait_time += input_mutex_timer();
         return open (thread_info);
     }
 
@@ -392,7 +411,9 @@ private:
                         int chbegin, int chend, TypeDesc format, void *data);
 
     void lock_input_mutex () {
+        Timer input_mutex_timer;
         m_input_mutex.lock ();
+        m_mutex_wait_time += input_mutex_timer();
     }
 
     void unlock_input_mutex () {
@@ -417,7 +438,18 @@ typedef intrusive_ptr<ImageCacheFile> ImageCacheFileRef;
 
 
 /// Map file names to file references
-typedef unordered_map_concurrent<ustring,ImageCacheFileRef,ustringHash,std::equal_to<ustring>, 8> FilenameMap;
+typedef unordered_map_concurrent<
+            ustring,
+            ImageCacheFileRef,
+            ustringHash,
+            std::equal_to<ustring>,
+            FILE_CACHE_SHARDS,
+            tsl::robin_map<
+                ustring,
+                ImageCacheFileRef,
+                ustringHash
+            >
+        > FilenameMap;
 typedef std::unordered_map<ustring,ImageCacheFileRef,ustringHash> FingerprintMap;
 
 
@@ -466,7 +498,10 @@ public:
     void xyz (int x, int y, int z) { m_x = x; m_y = y; m_z = z; }
 
     /// Is this an uninitialized tileID?
-    bool empty () const { return m_file == NULL; }
+    bool empty () const { return m_file == nullptr; }
+
+    /// Treating it like a bool says whether it's non-empty.
+    operator bool () const { return m_file != nullptr; }
 
     /// Do the two ID's refer to the same tile?  
     ///
@@ -499,7 +534,7 @@ public:
     size_t hash () const {
 #if 0
         // original -- turned out not to fill hash buckets evenly
-        return m_x * 53 + m_y * 97 + m_z * 193 + 
+        return m_x * 53 + m_y * 97 + m_z * 193 +
                m_subimage * 389 + m_miplevel * 1543 +
                m_file->filename().hash() * 769;
 #else
@@ -541,11 +576,8 @@ private:
 ///
 class ImageCacheTile : public RefCnt {
 public:
-    /// Construct a new tile, read the pixels from disk if read_now is true.
-    /// Requires a pointer to the thread-specific IC data including
-    /// microcache and statistics.
-    ImageCacheTile (const TileID &id, ImageCachePerThreadInfo *thread_info,
-                    bool read_now=true);
+    /// Construct a new tile, pixels will be read when calling read()
+    ImageCacheTile (const TileID &id);
 
     /// Construct a new tile out of the pixels supplied.
     ///
@@ -654,7 +686,18 @@ typedef intrusive_ptr<ImageCacheTile> ImageCacheTileRef;
 
 /// Hash table that maps TileID to ImageCacheTileRef -- this is the type of the
 /// main tile cache.
-typedef unordered_map_concurrent<TileID, ImageCacheTileRef, TileID::Hasher, std::equal_to<TileID>, 32> TileCache;
+typedef unordered_map_concurrent<
+            TileID,
+            ImageCacheTileRef,
+            TileID::Hasher,
+            std::equal_to<TileID>,
+            TILE_CACHE_SHARDS,
+            tsl::robin_map<
+                TileID,
+                ImageCacheTileRef,
+                TileID::Hasher
+            >
+        > TileCache;
 
 
 /// A very small amount of per-thread data that saves us from locking
@@ -679,8 +722,8 @@ public:
         : next_last_file(0), shared(false)
     {
         // std::cout << "Creating PerThreadInfo " << (void*)this << "\n";
-        for (int i = 0;  i < nlastfile;  ++i)
-            last_file[i] = NULL;
+        for (auto& f : last_file)
+            f = nullptr;
         purge = 0;
     }
 
@@ -1067,7 +1110,6 @@ private:
     bool m_forcefloat;           ///< force all cache tiles to be float
     bool m_accept_untiled;       ///< Accept untiled images?
     bool m_accept_unmipped;      ///< Accept unmipped images?
-    bool m_read_before_insert;   ///< Read tiles before adding to cache?
     bool m_deduplicate;          ///< Detect duplicate files?
     bool m_unassociatedalpha;    ///< Keep unassociated alpha files as they are?
     int m_failure_retries;       ///< Times to re-try disk failures

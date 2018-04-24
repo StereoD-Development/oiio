@@ -80,8 +80,8 @@ command += oiiotool ("src/tahoe-small.tif --chsum:weight=.2126,.7152,.0722 "
             + "-d uint8 -o chsum.tif")
 
 # test --colormap
-command += oiiotool ("--autocc src/tahoe-tiny.tif --colormap spectrum "
-            + "-d uint8 -o colormap-spectrum.tif")
+command += oiiotool ("--autocc src/tahoe-tiny.tif --colormap inferno "
+            + "-d uint8 -o colormap-inferno.tif")
 command += oiiotool ("--autocc src/tahoe-tiny.tif --colormap .25,.25,.25,0,.5,0,1,0,0 "
             + "-d uint8 -o colormap-custom.tif")
 
@@ -143,6 +143,8 @@ command += info_command ("rgbahalf-zfloat.exr", safematch=1)
 
 # test hole filling
 command += oiiotool ("ref/hole.tif --fillholes -o tahoe-filled.tif")
+# test hole filling for a cropped image
+command += oiiotool ("-pattern checker 64x64+32+32 3 -ch R,G,B,A=1.0 -fullsize 128x128+0+0 --croptofull -fillholes -d uint8 -o growholes.tif")
 
 # test clamping
 command += oiiotool (parent + "/oiio-images/grid.tif --resize 50%"
@@ -239,6 +241,12 @@ command += oiiotool ("--info -v -metamatch Debug --iconfig oiio:DebugOpenConfig!
 command += oiiotool ("--pattern fill:color=.6,.5,.4,.3,.2 64x64 5 -d uint8 -o const5.tif")
 command += oiiotool ("-i:ch=R,G,B const5.tif -o const5-rgb.tif")
 
+# Test that combining two images, if the first has no alpha but the second
+# does, gets the right channel names instead of just copying from the first.
+command += oiiotool ("-pattern constant:color=1,0,0 64x64 3 -pattern constant:color=0,1,0,1 64x64 4 -add -o add_rgb_rgba.exr")
+command += info_command ("add_rgb_rgba.exr", safematch=True)
+
+
 # To add more tests, just append more lines like the above and also add
 # the new 'feature.tif' (or whatever you call it) to the outputs list,
 # below.
@@ -261,9 +269,9 @@ outputs = [
             "cpow1.exr", "cpow2.exr",
             "abs.exr", "absdiff.exr", "absdiffc.exr",
             "chsum.tif",
-            "colormap-spectrum.tif", "colormap-custom.tif",
+            "colormap-inferno.tif", "colormap-custom.tif",
             "rgbahalf-zfloat.exr",
-            "tahoe-filled.tif",
+            "tahoe-filled.tif", "growholes.tif",
             "rangecompress.tif", "rangeexpand.tif",
             "rangecompress-luma.tif", "rangeexpand-luma.tif",
             "grid-clamped.tif",

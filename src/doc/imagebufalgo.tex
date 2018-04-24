@@ -360,7 +360,6 @@ alpha channel of the composite (makes a black halo around the characters).
 \bigspc\bigspc string_view fontname="")}
 \index{ImageBufAlgo!text_size} \indexapi{text_size}
 
-\NEW % 1.8
 The helper function {\cf text_size()} merely computes the dimensions of the
 text, returning it as an {\cf ROI}  relative to the left side of the
 baseline of the first character. Only the $x$ and $y$ dimensions of the ROI
@@ -1158,7 +1157,6 @@ bool {\ce color_map} (ImageBuf \&dst, const ImageBuf \&src, \\
         \bigspc\spc int srcchannel, string_view mapname, \\
         \bigspc\spc ROI roi=ROI::All(), int nthreads=0)}
 \index{ImageBufAlgo!color_map} \indexapi{color_map}
-\NEW % 1.8
 
 Set pixels of {\cf dst} to colors with values determined by looking up a
 color map using values of the {\cf src} image, using either the channel
@@ -1173,8 +1171,13 @@ An input value of 0.0 corresponds to {\cf knots[0..channels-1]}, an input
 value of 1.0 corresponds to {\cf knots[(nknots-1)*channels..knots.size()-1]}.
 
 In the second variant, just the name of a color map is specified. Recognized
-map names include: \qkw{blue-red}, \qkw{spectrum}, and \qkw{heat}. In all
-cases, the implied {\cf channels} is 3.
+map names include: \qkw{inferno}, \qkw{viridis},\qkw{magma}, \qkw{plasma},
+all of which are perceptually uniform, strictly increasing in luminance,
+look good when converted to grayscale, and work for people with all types of
+colorblindness. Also supported are the following color maps that do not have
+those desirable qualities (and are this not recommended): \qkw{blue-red},
+\qkw{spectrum}, and \qkw{heat}. In all cases, the implied {\cf channels} is
+3.
 
 \smallskip
 \noindent Examples:
@@ -1183,7 +1186,7 @@ cases, the implied {\cf channels} is 3.
     // scale) and map to a color spectrum:
     ImageBuf A ("a.exr");
     ImageBuf B;
-    ImageBufAlgo::color_map (B, A, -1, "spectrum");
+    ImageBufAlgo::color_map (B, A, -1, "inferno");
 
     float mymap[] = { 0.25, 0.25, 0.25,  0, 0.5, 0,  1, 0, 0 };
     ImageBufAlgo::color_map (B, A, -1 /* use luminance */,
@@ -1193,11 +1196,11 @@ cases, the implied {\cf channels} is 3.
 
 \noindent \begin{tabular}{lllll}
 \includegraphics[width=0.9in]{figures/tahoe-small.jpg} &
-\includegraphics[width=0.9in]{figures/colormap-blue-red.jpg} &
+\includegraphics[width=0.9in]{figures/colormap-inferno.jpg} &
+\includegraphics[width=0.9in]{figures/colormap-viridis.jpg} &
 \includegraphics[width=0.9in]{figures/colormap-spectrum.jpg} &
-\includegraphics[width=0.9in]{figures/colormap-heat.jpg} &
 \includegraphics[width=0.9in]{figures/colormap-custom.jpg} \\
-original & red-blue & spectrum & heat & custom values \\
+original & inferno & viridis & spectrum & custom values \\
 \end{tabular}
 \apiend
 
@@ -1937,7 +1940,8 @@ Copy the specified ROI of {\cf src} to {\cf dst} and fill any
 holes (pixels where alpha $< 1$) with plausible values using a push-pull
 technique.  The {\cf src} image must have
 an alpha channel.  The dst image will end up with a copy of src, but
-will have an alpha of 1.0 everywhere, and any place where the alpha
+will have an alpha of 1.0 everywhere within {\cf roi},
+and any place where the alpha
 of src was < 1, dst will have a pixel color that is a plausible
 ``filling'' of the original alpha hole.
 
@@ -2324,12 +2328,16 @@ filename}) into a tiled, MIP-mapped, texture file and write to the
 file named by ({\cf outputfilename}).  The {\cf mode} describes what type of texture file we
 are creating and may be one of the following:
 
-\noindent \begin{tabular}{p{2in}p{3in}}
+\noindent \begin{tabular}{p{2in}p{3.1in}}
 {\cf MakeTxTexture} & Ordinary 2D texture\\
 %MakeTxShadow & \\
 {\cf MakeTxEnvLatl} & Latitude-longitude environment map\\
 {\cf \small MakeTxEnvLatlFromLightProbe} & Latitude-longitude environment map
        constructed from a ``light probe'' image.\\
+{\cf MakeTxBumpWithSlopes} & Bump/displacement map with extra slope
+    data channels (6 channels total, containing both the height and 1st and
+    2nd moments of slope distributions) for bump-to-roughness conversion in
+    shaders. \\
 \end{tabular}
 
 If the {\cf outstream} pointer is not \NULL, it should point
@@ -2620,7 +2628,6 @@ the first opaque sample will be discarded, otherwise they will be kept.
 \apiitem{bool {\ce deep_holdout} (ImageBuf \&dst, const ImageBuf \&src, \\
 \bigspc\spc  const ImageBuf \&holdout, ROI roi=ROI::All(), int nthreads=0)}
 \index{ImageBufAlgo!deep_holdout} \indexapi{deep_holdout} \index{deep images}
-\NEW % 1.8
 Set the pixels of {\cf dst} to the pixels of {\cf src}, but only copying the
 samples that are closer than the opaque frontier of image {\cf holdout}.
 That is, {\cf holdout} will serve as a depth holdout mask, but no samples
@@ -2700,7 +2707,6 @@ Repair nonfinite ({\cf NaN} or {\cf Inf}) values, setting them to 0.0.
         \bigspc bool interpolate = true, \\
         \bigspc ROI roi=ROI::All(), int nthreads=0)}
 \index{ImageBufAlgo!resample} \indexapi{resample}
-\NEW % 1.8
 Set {\cf dst}, over the region of interest, to be a resized version of the
 corresponding portion of {\cf src} (mapping such that the ``full'' image
 window of each correspond to each other, regardless of resolution), for each

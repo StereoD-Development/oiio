@@ -36,7 +36,7 @@ CMAKE ?= cmake
 ifndef OPENIMAGEIO_SITE
     OPENIMAGEIO_SITE := ${shell uname -n}
 endif
-ifneq (${shell echo ${OPENIMAGEIO_SITE} | grep imageworks},)
+ifneq (${shell echo ${OPENIMAGEIO_SITE} | grep imageworks.com},)
 include ${working_dir}/site/spi/Makefile-bits
 endif
 
@@ -159,10 +159,6 @@ ifneq (${USE_NUKE},)
 MY_CMAKE_FLAGS += -DUSE_NUKE:BOOL=${USE_NUKE}
 endif
 
-ifneq (${USE_OPENSSL},)
-MY_CMAKE_FLAGS += -DUSE_OPENSSL:BOOL=${USE_OPENSSL}
-endif
-
 ifneq (${USE_OPENCV},)
 MY_CMAKE_FLAGS += -DUSE_OPENCV:BOOL=${USE_OPENCV}
 endif
@@ -283,7 +279,7 @@ MY_CMAKE_FLAGS += -G Ninja
 BUILDSENTINEL := build.ninja
 endif
 
-ifneq (${CODECOV},)
+ifeq (${CODECOV},1)
 MY_CMAKE_FLAGS += -DCMAKE_BUILD_TYPE:STRING=Debug -DCODECOV:BOOL=${CODECOV}
 endif
 
@@ -308,6 +304,10 @@ endif
 
 ifneq (${USE_FREETYPE},)
 MY_CMAKE_FLAGS += -DUSE_FREETYPE:BOOL=${USE_FREETYPE}
+endif
+
+ifneq (${BUILD_MISSING_DEPS},)
+MY_CMAKE_FLAGS += -DBUILD_MISSING_DEPS:BOOL=${BUILD_MISSING_DEPS}
 endif
 
 
@@ -397,7 +397,6 @@ TEST_FLAGS += --force-new-ctest-process --output-on-failure
 # 'make test' does a full build and then runs all tests
 test: cmake
 	@ ${CMAKE} -E cmake_echo_color --switch=$(COLOR) --cyan "Running tests ${TEST_FLAGS}..."
-	@ # if [ "${CODECOV}" == "1" ] ; then lcov -b ${build_dir} -d ${build_dir} -z ; rm -rf ${build_dir}/cov ; fi
 	@ ( cd ${build_dir} ; PYTHONPATH=${PWD}/${build_dir}/src/python ctest -E broken ${TEST_FLAGS} )
 	@ ( if [ "${CODECOV}" == "1" ] ; then \
 	      cd ${build_dir} ; \
@@ -507,6 +506,7 @@ help:
 	@echo "                                  0, sse2, sse3, ssse3, sse4.1, sse4.2, f16c,"
 	@echo "                                  avx, avx2, avx512f)"
 	@echo "      TEX_BATCH_SIZE=16        Override TextureSystem SIMD batch size"
+	@echo "      BUILD_MISSING_DEPS=1     Try to download/build missing dependencies"
 	@echo "  make test, extra options:"
 	@echo "      TEST=regex               Run only tests matching the regex"
 	@echo ""
