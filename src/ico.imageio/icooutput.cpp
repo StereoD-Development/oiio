@@ -47,20 +47,20 @@ OIIO_PLUGIN_NAMESPACE_BEGIN
 
 using namespace ICO_pvt;
 
-class ICOOutput : public ImageOutput {
+class ICOOutput final : public ImageOutput {
 public:
     ICOOutput ();
     virtual ~ICOOutput ();
-    virtual const char * format_name (void) const { return "ico"; }
-    virtual int supports (string_view feature) const;
+    virtual const char * format_name (void) const override { return "ico"; }
+    virtual int supports (string_view feature) const override;
     virtual bool open (const std::string &name, const ImageSpec &spec,
-                       OpenMode mode=Create);
-    virtual bool close ();
+                       OpenMode mode=Create) override;
+    virtual bool close () override;
     virtual bool write_scanline (int y, int z, TypeDesc format,
-                                 const void *data, stride_t xstride);
+                                 const void *data, stride_t xstride) override;
     virtual bool write_tile (int x, int y, int z, TypeDesc format,
                              const void *data, stride_t xstride,
-                             stride_t ystride, stride_t zstride);
+                             stride_t ystride, stride_t zstride) override;
 
 private:
     std::string m_filename;           ///< Stash the filename
@@ -182,8 +182,7 @@ ICOOutput::open (const std::string &name, const ImageSpec &userspec,
     // check if the client wants this subimage written as PNG
     // also force PNG if image size is 256 because ico_header->width and height
     // are 8-bit
-    const ParamValue *p = m_spec.find_attribute ("ico:PNG",
-                                                       TypeDesc::TypeInt);
+    const ParamValue *p = m_spec.find_attribute ("ico:PNG", TypeInt);
     m_want_png = (p && *(int *)p->data())
                  || m_spec.width == 256 || m_spec.height == 256;
 
@@ -441,9 +440,8 @@ ICOOutput::close ()
         std::vector<unsigned char>().swap (m_tilebuffer);
     }
 
-    if (m_png && m_info) {
-        PNG_pvt::finish_image (m_png);
-        PNG_pvt::destroy_write_struct (m_png, m_info);
+    if (m_png) {
+        PNG_pvt::finish_image (m_png, m_info);
     }
     fclose (m_file);
     m_file = NULL;

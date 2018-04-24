@@ -96,7 +96,7 @@ declare_imageio_format (const std::string &format_name,
     std::vector<std::string> all_extensions;
     // Look for input creator and list of supported extensions
     if (input_creator) {
-        if (input_formats.find(format_name) != input_formats.end())
+        if (input_formats.find(format_name) == input_formats.end())
             input_formats[format_name] = input_creator;
         std::string extsym = format_name + "_input_extensions";
         for (const char **e = input_extensions; e && *e; ++e) {
@@ -111,7 +111,7 @@ declare_imageio_format (const std::string &format_name,
 
     // Look for output creator and list of supported extensions
     if (output_creator) {
-        if (output_formats.find(format_name) != output_formats.end())
+        if (output_formats.find(format_name) == output_formats.end())
             output_formats[format_name] = output_creator;
         for (const char **e = output_extensions; e && *e; ++e) {
             std::string ext (*e);
@@ -243,6 +243,7 @@ catalog_plugin (const std::string &format_name,
     PLUGENTRY (iff);
     PLUGENTRY (jpeg);
     PLUGENTRY (jpeg2000);
+    PLUGENTRY (null);
     PLUGENTRY (openexr);
     PLUGENTRY (png);
     PLUGENTRY (pnm);
@@ -311,6 +312,7 @@ catalog_builtin_plugins ()
 #ifdef USE_OPENJPEG
     DECLAREPLUG (jpeg2000);
 #endif
+    DECLAREPLUG (null);
     DECLAREPLUG (openexr);
     DECLAREPLUG (png);
     DECLAREPLUG (pnm);
@@ -472,17 +474,30 @@ ImageInput::create (const std::string &filename,
 
 
 ImageInput *
-ImageInput::create (const std::string &filename, 
+ImageInput::create (const std::string &filename,
                     bool do_open,
                     const std::string &plugin_searchpath)
 {
-    if (filename.empty()) { // Can't even guess if no filename given
+    // In case the 'filename' was really a REST-ful URI with query/config
+    // details tacked on to the end, strip them off so we can correctly
+    // extract the file extension.
+    std::map<std::string,std::string> args;
+    std::string filename_stripped;
+    if (! Strutil::get_rest_arguments (filename, filename_stripped, args)) {
+        pvt::error ("ImageInput::create() called with malformed filename");
+        return nullptr;
+    }
+
+    if (filename_stripped.empty())
+        filename_stripped = filename;
+
+    if (filename_stripped.empty()) { // Can't even guess if no filename given
         pvt::error ("ImageInput::create() called with no filename");
         return NULL;
     }
 
     // Extract the file extension from the filename (without the leading dot)
-    std::string format = Filesystem::extension (filename, false);
+    std::string format = Filesystem::extension (filename_stripped, false);
     if (format.empty()) {
         // If the file had no extension, maybe it was itself the format name
         format = filename;
@@ -616,6 +631,141 @@ ImageInput::create (const std::string &filename,
     return (ImageInput *) create_function();
 }
 
+
+
+ImageInput *
+ImageInput::create (char *buffer, size_t size, bool do_open,
+                    const std::string &format_name)
+{
+    if (format_name.empty()) {
+        pvt::error ("ImageInput::create(*buffer ...) called with no format_name.");
+        return NULL;
+    }
+
+    if (!buffer || size <= 0) {
+        pvt::error("ImageInput::create(*buffer ...) called with invalid buffer.");
+        return NULL;
+    }
+
+    std::string format(format_name);
+
+    ImageInput::Creator create_function = NULL;
+    { // scope the lock:
+        recursive_lock_guard lock (imageio_mutex);  // Ensure thread safety
+
+        // See if it's already in the table.  If not, scan all plugins we can
+        // find to populate the table.
+        Strutil::to_lower (format);
+        InputPluginMap::const_iterator found = input_formats.find (format);
+        if (found == input_formats.end()) {
+            catalog_all_plugins (pvt::plugin_searchpath.string());
+            found = input_formats.find (format);
+        }
+        if (found != input_formats.end())
+            create_function = found->second;
+    }
+
+    // Remember which prototypes we've already tried, so we don't double dip.
+    std::vector<ImageInput::Creator> formats_tried;
+
+    std::string specific_error;
+    if (create_function) {
+        // With memory buffers, we are just using the format_name and, for the moment,
+        // relying on the data itself with a validate step in order to 
+        formats_tried.push_back (create_function);
+        ImageInput *in = (ImageInput *)create_function();
+
+
+        if (! do_open && in) {
+            // Special case: we don't need to return the file
+            // already opened, and this ImageInput says that the
+            // file is the right type.
+            return in;
+        }
+
+        ImageSpec tmpspec;
+        bool ok = in && in->open (buffer, size, tmpspec);
+        if (ok) {
+            // It worked
+            if (! do_open)
+                in->close ();
+            return in;
+        } else {
+            // Oops, it failed.  Apparently, this file can't be
+            // opened with this II.  Clear create_function to force
+            // the code below to check every plugin we know.
+            create_function = NULL;
+            if (in)
+            {
+                specific_error = in->geterror();
+                std::cerr << "ERROR: " << specific_error;
+            }
+        }
+        delete in;
+    }
+
+    if (! create_function) {
+        // If a plugin can't be found that was explicitly designated for
+        // this extension, then just try every one we find and see if
+        // any will open the file.  Pass it a configuration request that
+        // includes a "nowait" option so that it returns immediately if
+        // it's a plugin that might wait for an event, like a socket that
+        // doesn't yet exist).
+        ImageSpec config;
+        config.attribute ("nowait", (int)1);
+        recursive_lock_guard lock (imageio_mutex);  // Ensure thread safety
+        for (InputPluginMap::const_iterator plugin = input_formats.begin();
+             plugin != input_formats.end(); ++plugin)
+        {
+            // If we already tried this create function, don't do it again
+            if (std::find (formats_tried.begin(), formats_tried.end(),
+                           plugin->second) != formats_tried.end())
+                continue;
+            formats_tried.push_back (plugin->second);  // remember
+
+            ImageSpec tmpspec;
+            ImageInput *in = NULL;
+            try {
+                in = plugin->second();
+            } catch (...) {
+                // Safety in case the ctr throws an exception
+            }
+            // We either need to open it, or we already know it appears
+            // to be a file of the right type.
+            bool ok = in && in->open(buffer, size, tmpspec, config);
+            if (ok) {
+                if (! do_open)
+                    in->close ();
+                return in;
+            }
+            delete in;
+        }
+    }
+
+    if (create_function == NULL) {
+        recursive_lock_guard lock (imageio_mutex);  // Ensure thread safety
+        if (input_formats.empty()) {
+            // This error is so fundamental, we echo it to stderr in
+            // case the app is too dumb to do so.
+            const char *msg = "ImageInput::create() could not find any ImageInput plugins!\n"
+                          "    Perhaps you need to set OIIO_LIBRARY_PATH.\n";
+            fprintf (stderr, "%s", msg);
+            pvt::error ("%s", msg);
+        }
+        else if (! specific_error.empty()) {
+            // Pass along any specific error message we got from our
+            // best guess of the format.
+            pvt::error ("%s", specific_error);
+        }
+        else
+            pvt::error ("The buffer passed into the ImageInput::create() cannot be opened by any"
+                        " known plugin loaded.");
+        return NULL;
+    }
+
+    return (ImageInput *) create_function();
+
+}
 
 
 void

@@ -42,52 +42,47 @@
 #include <OpenImageIO/imagebufalgo.h>
 #include <OpenImageIO/imagebufalgo_util.h>
 #include <OpenImageIO/dassert.h>
+#include <OpenImageIO/thread.h>
 #include <OpenImageIO/SHA1.h>
-
-#ifdef USE_OPENSSL
-#ifdef __APPLE__
-// Newer OSX releaes mark OpenSSL functions as deprecated, in favor of
-// CDSA.  Make the warnings stop.
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations" 
-#endif
-#include <openssl/sha.h>
-#endif
-
+#include "imageio_pvt.h"
 
 
 OIIO_NAMESPACE_BEGIN
 
 
-inline void
-reset (ImageBufAlgo::PixelStats &p, int nchannels)
+void
+ImageBufAlgo::PixelStats::reset (int nchannels)
 {
     const float inf = std::numeric_limits<float>::infinity();
-    p.min.clear ();          p.min.resize (nchannels, inf);
-    p.max.clear ();          p.max.resize (nchannels, -inf);
-    p.avg.clear ();          p.avg.resize (nchannels);
-    p.stddev.clear ();       p.stddev.resize (nchannels);
-    p.nancount.clear ();     p.nancount.resize (nchannels, 0);
-    p.infcount.clear ();     p.infcount.resize (nchannels, 0);
-    p.finitecount.clear ();  p.finitecount.resize (nchannels, 0);
-    p.sum.clear ();          p.sum.resize (nchannels, 0.0);
-    p.sum2.clear ();         p.sum2.resize (nchannels, 0.0);
+    min.clear ();          min.resize (nchannels, inf);
+    max.clear ();          max.resize (nchannels, -inf);
+    avg.clear ();          avg.resize (nchannels);
+    stddev.clear ();       stddev.resize (nchannels);
+    nancount.clear ();     nancount.resize (nchannels, 0);
+    infcount.clear ();     infcount.resize (nchannels, 0);
+    finitecount.clear ();  finitecount.resize (nchannels, 0);
+    sum.clear ();          sum.resize (nchannels, 0.0);
+    sum2.clear ();         sum2.resize (nchannels, 0.0);
 }
 
 
-inline void
-merge (ImageBufAlgo::PixelStats &sum, const ImageBufAlgo::PixelStats &p)
+
+void
+ImageBufAlgo::PixelStats::merge (const ImageBufAlgo::PixelStats &p)
 {
-    ASSERT (sum.min.size() == p.min.size());
-    for (size_t c = 0, e = sum.min.size(); c < e;  ++c) {
-        sum.min[c] = std::min (sum.min[c], p.min[c]);
-        sum.max[c] = std::max (sum.max[c], p.max[c]);
-        sum.nancount[c] += p.nancount[c];
-        sum.infcount[c] += p.infcount[c];
-        sum.finitecount[c] += p.finitecount[c];
-        sum.sum[c] += p.sum[c];
-        sum.sum2[c] += p.sum2[c];
+    std::lock_guard<OIIO::spin_mutex> lock (mutex);
+    ASSERT (min.size() == p.min.size());
+    for (size_t c = 0, e = min.size(); c < e;  ++c) {
+        min[c] = std::min (min[c], p.min[c]);
+        max[c] = std::max (max[c], p.max[c]);
+        nancount[c] += p.nancount[c];
+        infcount[c] += p.infcount[c];
+        finitecount[c] += p.finitecount[c];
+        sum[c] += p.sum[c];
+        sum2[c] += p.sum2[c];
     }
 }
+
 
 
 inline void
@@ -142,55 +137,43 @@ computePixelStats_ (const ImageBuf &src, ImageBufAlgo::PixelStats &stats,
 
     int nchannels = src.spec().nchannels;
 
-    // Use local storage for smaller batches, then merge the batches
-    // into the final results.  This preserves precision for large
-    // images, where the running total may be too big to incorporate the
-    // contributions of individual pixel values without losing
-    // precision.
-    //
-    // This approach works best when the batch size is the sqrt of
-    // numpixels, which makes the num batches roughly equal to the
-    // number of pixels / batch.
-    ImageBufAlgo::PixelStats tmp;
-    reset (tmp, nchannels);
-    reset (stats, nchannels);
-    
-    int PIXELS_PER_BATCH = std::max (1024,
-            static_cast<int>(sqrt((double)src.spec().image_pixels())));
-    
+    stats.reset (nchannels);
+
     if (src.deep()) {
-        // Loop over all pixels ...
-        for (ImageBuf::ConstIterator<T> s(src, roi); ! s.done();  ++s) {
-            int samples = s.deep_samples();
-            if (! samples)
-                continue;
-            for (int c = roi.chbegin;  c < roi.chend;  ++c) {
-                for (int i = 0;  i < samples;  ++i) {
-                    float value = s.deep_value (c, i);
-                    val (tmp, c, value);
-                    if ((tmp.finitecount[c] % PIXELS_PER_BATCH) == 0) {
-                        merge (stats, tmp);
-                        reset (tmp, nchannels);
+        parallel_for_chunked (roi.ybegin, roi.yend, 64,
+                              [&](int id, int64_t ybegin, int64_t yend) {
+            ROI subroi (roi.xbegin, roi.xend, ybegin, yend, roi.zbegin, roi.zend,
+                        roi.chbegin, roi.chend);
+            ImageBufAlgo::PixelStats tmp (nchannels);
+            for (ImageBuf::ConstIterator<T> s(src, subroi); ! s.done();  ++s) {
+                int samples = s.deep_samples();
+                if (! samples)
+                    continue;
+                for (int c = subroi.chbegin;  c < subroi.chend;  ++c) {
+                    for (int i = 0;  i < samples;  ++i) {
+                        float value = s.deep_value (c, i);
+                        val (tmp, c, value);
                     }
                 }
             }
-        }
+            stats.merge (tmp);
+        });
+
     } else {  // Non-deep case
-        // Loop over all pixels ...
-        for (ImageBuf::ConstIterator<T> s(src, roi); ! s.done();  ++s) {
-            for (int c = roi.chbegin;  c < roi.chend;  ++c) {
-                float value = s[c];
-                val (tmp, c, value);
-                if ((tmp.finitecount[c] % PIXELS_PER_BATCH) == 0) {
-                    merge (stats, tmp);
-                    reset (tmp, nchannels);
+        parallel_for_chunked (roi.ybegin, roi.yend, 64,
+                              [&](int id, int64_t ybegin, int64_t yend) {
+            ROI subroi (roi.xbegin, roi.xend, ybegin, yend, roi.zbegin, roi.zend,
+                        roi.chbegin, roi.chend);
+            ImageBufAlgo::PixelStats tmp (nchannels);
+            for (ImageBuf::ConstIterator<T> s(src, subroi); ! s.done();  ++s) {
+                for (int c = subroi.chbegin;  c < subroi.chend;  ++c) {
+                    float value = s[c];
+                    val (tmp, c, value);
                 }
             }
-        }
+            stats.merge (tmp);
+        });
     }
-
-    // Merge anything left over
-    merge (stats, tmp);
 
     // Compute final results
     finalize (stats);
@@ -204,6 +187,7 @@ bool
 ImageBufAlgo::computePixelStats (PixelStats &stats, const ImageBuf &src,
                                  ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtimer("IBA::computePixelStats");
     if (! roi.defined())
         roi = get_roi (src.spec());
     else
@@ -335,6 +319,7 @@ ImageBufAlgo::compare (const ImageBuf &A, const ImageBuf &B,
                        ImageBufAlgo::CompareResults &result,
                        ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtimer("IBA::compare");
     // If no ROI is defined, use the union of the data windows of the two
     // images.
     if (! roi.defined())
@@ -346,7 +331,7 @@ ImageBufAlgo::compare (const ImageBuf &A, const ImageBuf &B,
         return false;
 
     bool ok;
-    OIIO_DISPATCH_TYPES2 (ok, "compare", compare_,
+    OIIO_DISPATCH_COMMON_TYPES2_CONST (ok, "compare", compare_,
                           A.spec().format, B.spec().format,
                           A, B, failthresh, warnthresh, result,
                           roi, nthreads);
@@ -395,6 +380,7 @@ bool
 ImageBufAlgo::isConstantColor (const ImageBuf &src, float *color,
                                ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtimer("IBA::isConstantColor");
     // If no ROI is defined, use the data window of src.
     if (! roi.defined())
         roi = get_roi(src.spec());
@@ -432,6 +418,7 @@ bool
 ImageBufAlgo::isConstantChannel (const ImageBuf &src, int channel, float val,
                                  ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtimer("IBA::isConstantChannel");
     // If no ROI is defined, use the data window of src.
     if (! roi.defined())
         roi = get_roi(src.spec());
@@ -472,6 +459,7 @@ isMonochrome_ (const ImageBuf &src, ROI roi, int nthreads)
 bool
 ImageBufAlgo::isMonochrome (const ImageBuf &src, ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtimer("IBA::isMonochrome");
     // If no ROI is defined, use the data window of src.
     if (! roi.defined())
         roi = get_roi(src.spec());
@@ -528,6 +516,7 @@ ImageBufAlgo::color_count (const ImageBuf &src, imagesize_t *count,
                            const float *eps,
                            ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtimer("IBA::color_count");
     // If no ROI is defined, use the data window of src.
     if (! roi.defined())
         roi = get_roi(src.spec());
@@ -594,6 +583,7 @@ ImageBufAlgo::color_range_check (const ImageBuf &src, imagesize_t *lowcount,
                                  const float *low, const float *high,
                                  ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtimer("IBA::color_range_check");
     // If no ROI is defined, use the data window of src.
     if (! roi.defined())
         roi = get_roi(src.spec());
@@ -645,6 +635,7 @@ deep_nonempty_region (const ImageBuf &src, ROI roi)
 ROI
 ImageBufAlgo::nonzero_region (const ImageBuf &src, ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtimer("IBA::nonzero_region");
     roi = roi_intersection (roi, src.roi());
 
     if (src.deep()) {
@@ -716,43 +707,9 @@ simplePixelHashSHA1 (const ImageBuf &src,
     if (! localpixels)
         tmp.resize (chunk*scanline_bytes);
 
-#ifdef USE_OPENSSL
-    // If OpenSSL was available at build time, use its SHA-1
-    // implementation, which is about 20% faster than CSHA1.
-    SHA_CTX sha;
-    SHA1_Init (&sha);
-
-    for (int z = roi.zbegin, zend=roi.zend;  z < zend;  ++z) {
-        for (int y = roi.ybegin, yend=roi.yend;  y < yend;  y += chunk) {
-            int y1 = std::min (y+chunk, yend);
-            if (localpixels) {
-                SHA1_Update (&sha, src.pixeladdr (roi.xbegin, y, z),
-                            (unsigned int) scanline_bytes*(y1-y));
-            } else {
-                src.get_pixels (ROI (roi.xbegin, roi.xend, y, y1, z, z+1),
-                                src.spec().format, &tmp[0]);
-                SHA1_Update (&sha, &tmp[0], (unsigned int) scanline_bytes*(y1-y));
-            }
-        }
-    }
-    
-    // If extra info is specified, also include it in the sha computation
-    if (!extrainfo.empty())
-        SHA1_Update (&sha, extrainfo.data(), extrainfo.size());
-
-    unsigned char md[SHA_DIGEST_LENGTH];
-    char hash_digest[2*SHA_DIGEST_LENGTH+1];
-    SHA1_Final (md, &sha);
-    for (int i = 0;  i < SHA_DIGEST_LENGTH;  ++i)
-        sprintf (hash_digest+2*i, "%02X", (int)md[i]);
-    hash_digest[2*SHA_DIGEST_LENGTH] = 0;
-    return std::string (hash_digest);
-    
-#else
-    // Fall back on CSHA1 if OpenSSL was not available or if 
     CSHA1 sha;
     sha.Reset ();
-    
+
     for (int z = roi.zbegin, zend=roi.zend;  z < zend;  ++z) {
         for (int y = roi.ybegin, yend=roi.yend;  y < yend;  y += chunk) {
             int y1 = std::min (y+chunk, yend);
@@ -766,18 +723,17 @@ simplePixelHashSHA1 (const ImageBuf &src,
             }
         }
     }
-    
+
     // If extra info is specified, also include it in the sha computation
     if (!extrainfo.empty()) {
         sha.Update ((const unsigned char*) extrainfo.data(), extrainfo.size());
     }
-    
+
     sha.Final ();
     std::string hash_digest;
     sha.ReportHashStl (hash_digest, CSHA1::REPORT_HEX_SHORT);
 
     return hash_digest;
-#endif
 }
 
 } // anon namespace
@@ -789,14 +745,15 @@ ImageBufAlgo::computePixelHashSHA1 (const ImageBuf &src,
                                     string_view extrainfo,
                                     ROI roi, int blocksize, int nthreads)
 {
+    pvt::LoggedTimer logtimer("IBA::computePixelHashSHA1");
     if (! roi.defined())
         roi = get_roi (src.spec());
 
-    // Fall back to whole-image hash for only one block
     if (blocksize <= 0 || blocksize >= roi.height())
         return simplePixelHashSHA1 (src, extrainfo, roi);
 
     int nblocks = (roi.height()+blocksize-1) / blocksize;
+    ASSERT (nblocks > 1);
     std::vector<std::string> results (nblocks);
     parallel_for_chunked (roi.ybegin, roi.yend, blocksize,
                           [&](int64_t ybegin, int64_t yend){
@@ -807,24 +764,9 @@ ImageBufAlgo::computePixelHashSHA1 (const ImageBuf &src,
         results[b] = simplePixelHashSHA1 (src, "", broi);
     });
 
-#ifdef USE_OPENSSL
-    // If OpenSSL was available at build time, use its SHA-1
-    // implementation, which is about 20% faster than CSHA1.
-    SHA_CTX sha;
-    SHA1_Init (&sha);
-    for (int b = 0;  b < nblocks;  ++b)
-        SHA1_Update (&sha, results[b].c_str(), results[b].size());
-    if (extrainfo.size())
-        SHA1_Update (&sha, extrainfo.c_str(), extrainfo.size());
-    unsigned char md[SHA_DIGEST_LENGTH];
-    char hash_digest[2*SHA_DIGEST_LENGTH+1];
-    SHA1_Final (md, &sha);
-    for (int i = 0;  i < SHA_DIGEST_LENGTH;  ++i)
-        sprintf (hash_digest+2*i, "%02X", (int)md[i]);
-    hash_digest[2*SHA_DIGEST_LENGTH] = 0;
-    return std::string (hash_digest);
-#else
-    // Fall back on CSHA1 if OpenSSL was not available or if 
+    // If there are multiple blocks, hash the block digests to get a final
+    // hash. (This makes the parallel loop safe, because the order that the
+    // blocks computed doesn't matter.)
     CSHA1 sha;
     sha.Reset ();
     for (int b = 0;  b < nblocks;  ++b)
@@ -835,7 +777,6 @@ ImageBufAlgo::computePixelHashSHA1 (const ImageBuf &src,
     std::string hash_digest;
     sha.ReportHashStl (hash_digest, CSHA1::REPORT_HEX_SHORT);
     return hash_digest;
-#endif
 }
 
 
@@ -902,7 +843,8 @@ ImageBufAlgo::histogram (const ImageBuf &A, int channel,
                          float min, float max, imagesize_t *submin,
                          imagesize_t *supermax, ROI roi)
 {
-    if (A.spec().format != TypeDesc::TypeFloat) {
+    pvt::LoggedTimer logtimer("IBA::histogram");
+    if (A.spec().format != TypeFloat) {
         A.error ("Unsupported pixel data format '%s'", A.spec().format);
         return false;
     }
@@ -944,6 +886,7 @@ bool
 ImageBufAlgo::histogram_draw (ImageBuf &R,
                               const std::vector<imagesize_t> &histogram)
 {
+    pvt::LoggedTimer logtimer("IBA::histogram_draw");
     // Fail if there are no bins to draw.
     int bins = histogram.size();
     if (bins == 0) {
@@ -953,7 +896,7 @@ ImageBufAlgo::histogram_draw (ImageBuf &R,
 
     // Check R and modify it if needed.
     int height = R.spec().height;
-    if (R.spec().format != TypeDesc::TypeFloat || R.nchannels() != 1 ||
+    if (R.spec().format != TypeFloat || R.nchannels() != 1 ||
         R.spec().width != bins) {
         ImageSpec newspec = ImageSpec (bins, height, 1, TypeDesc::FLOAT);
         R.reset ("dummy", newspec);

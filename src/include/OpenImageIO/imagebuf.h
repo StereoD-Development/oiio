@@ -56,88 +56,6 @@ OIIO_NAMESPACE_BEGIN
 class ImageBuf;
 
 
-/// Helper struct describing a region of interest in an image.
-/// The region is [xbegin,xend) x [begin,yend) x [zbegin,zend),
-/// with the "end" designators signifying one past the last pixel,
-/// a la STL style.
-struct ROI {
-    int xbegin, xend, ybegin, yend, zbegin, zend;
-    int chbegin, chend;
-
-    /// Default constructor is an undefined region.
-    ///
-    ROI () : xbegin(std::numeric_limits<int>::min()), xend(0),
-             ybegin(0), yend(0), zbegin(0), zend(0), chbegin(0), chend(0)
-    { }
-
-    /// Constructor with an explicitly defined region.
-    ///
-    ROI (int xbegin, int xend, int ybegin, int yend,
-         int zbegin=0, int zend=1, int chbegin=0, int chend=10000)
-        : xbegin(xbegin), xend(xend), ybegin(ybegin), yend(yend),
-          zbegin(zbegin), zend(zend), chbegin(chbegin), chend(chend)
-    { }
-
-    /// Is a region defined?
-    bool defined () const { return (xbegin != std::numeric_limits<int>::min()); }
-
-    // Region dimensions.
-    int width () const { return xend - xbegin; }
-    int height () const { return yend - ybegin; }
-    int depth () const { return zend - zbegin; }
-
-    /// Number of channels in the region.  Beware -- this defaults to a
-    /// huge number, and to be meaningful you must consider
-    /// std::min (imagebuf.nchannels(), roi.nchannels()).
-    int nchannels () const { return chend - chbegin; }
-
-    /// Total number of pixels in the region.
-    imagesize_t npixels () const {
-        if (! defined())
-            return 0;
-        imagesize_t w = width(), h = height(), d = depth();
-        return w*h*d;
-    }
-
-    /// Documentary sugar -- although the static ROI::All() function
-    /// simply returns the results of the default ROI constructor, it
-    /// makes it very clear when using as a default function argument
-    /// that it means "all" of the image.  For example,
-    ///     float myfunc (ImageBuf &buf, ROI roi = ROI::All());
-    /// Doesn't that make it abundantly clear?
-    static ROI All () { return ROI(); }
-
-    /// Test equality of two ROIs
-    friend bool operator== (const ROI &a, const ROI &b) {
-        return (a.xbegin == b.xbegin && a.xend == b.xend &&
-                a.ybegin == b.ybegin && a.yend == b.yend &&
-                a.zbegin == b.zbegin && a.zend == b.zend &&
-                a.chbegin == b.chbegin && a.chend == b.chend);
-    }
-    /// Test inequality of two ROIs
-    friend bool operator!= (const ROI &a, const ROI &b) {
-        return (a.xbegin != b.xbegin || a.xend != b.xend ||
-                a.ybegin != b.ybegin || a.yend != b.yend ||
-                a.zbegin != b.zbegin || a.zend != b.zend ||
-                a.chbegin != b.chbegin || a.chend != b.chend);
-    }
-
-    /// Stream output of the range
-    friend std::ostream & operator<< (std::ostream &out, const ROI &roi) {
-        out << roi.xbegin << ' ' << roi.xend << ' ' << roi.ybegin << ' '
-            << roi.yend << ' ' << roi.zbegin << ' ' << roi.zend << ' '
-            << roi.chbegin << ' ' << roi.chend;
-        return out;
-    }
-};
-
-
-/// Union of two regions, the smallest region containing both.
-OIIO_API ROI roi_union (const ROI &A, const ROI &B);
-
-/// Intersection of two regions.
-OIIO_API ROI roi_intersection (const ROI &A, const ROI &B);
-
 /// Return pixel data window for this ImageSpec as a ROI.
 OIIO_API ROI get_roi (const ImageSpec &spec);
 
@@ -520,53 +438,6 @@ public:
                      stride_t ystride=AutoStride,
                      stride_t zstride=AutoStride);
 
-    OIIO_DEPRECATED("Use get_pixels(ROI, ...) instead. [1.6]")
-    bool get_pixel_channels (int xbegin, int xend, int ybegin, int yend,
-                             int zbegin, int zend, int chbegin, int chend,
-                             TypeDesc format, void *result,
-                             stride_t xstride=AutoStride,
-                             stride_t ystride=AutoStride,
-                             stride_t zstride=AutoStride) const;
-
-    OIIO_DEPRECATED("Use get_pixels(ROI, ...) instead. [1.6]")
-    bool get_pixels (int xbegin, int xend, int ybegin, int yend,
-                     int zbegin, int zend,
-                     TypeDesc format, void *result,
-                     stride_t xstride=AutoStride,
-                     stride_t ystride=AutoStride,
-                     stride_t zstride=AutoStride) const;
-
-    template<typename T>
-    OIIO_DEPRECATED("Use get_pixels(ROI, ...) instead. [1.6]")
-    bool get_pixel_channels (int xbegin, int xend, int ybegin, int yend,
-                             int zbegin, int zend, int chbegin, int chend,
-                             T *result, stride_t xstride=AutoStride,
-                             stride_t ystride=AutoStride,
-                             stride_t zstride=AutoStride) const;
-
-    template<typename T>
-    OIIO_DEPRECATED("Use get_pixels(ROI, ...) instead. [1.6]")
-    bool get_pixels (int xbegin, int xend, int ybegin, int yend,
-                     int zbegin, int zend, T *result,
-                     stride_t xstride=AutoStride, stride_t ystride=AutoStride,
-                     stride_t zstride=AutoStride) const
-    {
-        return get_pixel_channels (xbegin, xend, ybegin, yend, zbegin, zend,
-                                   0, nchannels(), result,
-                                   xstride, ystride, zstride);
-    }
-
-    template<typename T>
-    OIIO_DEPRECATED("Use get_pixels(ROI, ...) instead. [1.6]")
-    bool get_pixels (int xbegin_, int xend_, int ybegin_, int yend_,
-                      int zbegin_, int zend_,
-                      std::vector<T> &result) const
-    {
-        result.resize (nchannels() * ((zend_-zbegin_)*(yend_-ybegin_)*(xend_-xbegin_)));
-        return get_pixels (xbegin_, xend_, ybegin_, yend_, zbegin_, zend_,
-                           &result[0]);
-    }
-
 
     int orientation () const;
     void set_orientation (int orient);
@@ -640,10 +511,17 @@ public:
     TypeDesc pixeltype () const;
 
     /// A raw pointer to "local" pixel memory, if they are fully in RAM
-    /// and not backed by an ImageCache, or NULL otherwise.  You can
+    /// and not backed by an ImageCache, or nullptr otherwise.  You can
     /// also test it like a bool to find out if pixels are local.
     void *localpixels ();
     const void *localpixels () const;
+
+    /// Pixel-to-pixel stride within the localpixels memory.
+    stride_t pixel_stride () const;
+    /// Scanline-to-scanline stride within the localpixels memory.
+    stride_t scanline_stride () const;
+    /// Z plane stride within the localpixels memory.
+    stride_t z_stride () const;
 
     /// Are the pixels backed by an ImageCache, rather than the whole
     /// image being in RAM somewhere?
@@ -651,20 +529,15 @@ public:
 
     ImageCache *imagecache () const;
 
-    /// Return the address where pixel (x,y,z) is stored in the image buffer.
-    /// Use with extreme caution!  Will return NULL if the pixel values
-    /// aren't local.
-    const void *pixeladdr (int x, int y, int z=0) const;
+    /// Return the address where pixel (x,y,z), channel ch, is stored in the
+    /// image buffer.  Use with extreme caution!  Will return nullptr if the
+    /// pixel values aren't local.
+    const void *pixeladdr (int x, int y, int z=0, int ch=0) const;
 
-    /// Return the address where pixel (x,y) is stored in the image buffer.
-    /// Use with extreme caution!  Will return NULL if the pixel values
-    /// aren't local.
-    void *pixeladdr (int x, int y) { return pixeladdr (x, y, 0); }
-
-    /// Return the address where pixel (x,y,z) is stored in the image buffer.
-    /// Use with extreme caution!  Will return NULL if the pixel values
-    /// aren't local.
-    void *pixeladdr (int x, int y, int z);
+    /// Return the address where pixel (x,y,z), channel ch, is stored in the
+    /// image buffer.  Use with extreme caution!  Will return nullptr if the
+    /// pixel values aren't local.
+    void *pixeladdr (int x, int y, int z=0, int ch=0);
 
     /// Return the index of pixel (x,y,z). If check_range is true, return
     /// -1 for an invalid coordinate that is not within the data window.
@@ -707,14 +580,6 @@ public:
     /// Set deep sample value within a pixel, as a uint32.
     void set_deep_value (int x, int y, int z, int c, int s, uint32_t value);
 
-    OIIO_DEPRECATED("Use set_deep_value() [1.7]")
-    void set_deep_value_uint (int x, int y, int z, int c, int s, uint32_t value);
-
-    /// Allocate all the deep samples, called after deepdata()->nsamples
-    /// is set.
-    OIIO_DEPRECATED("No longer necessary to call deep_alloc [1.7]")
-    void deep_alloc ();
-
     /// Retrieve the "deep" data.
     DeepData *deepdata ();
     const DeepData *deepdata () const;
@@ -733,7 +598,7 @@ public:
     class IteratorBase {
     public:
         IteratorBase (const ImageBuf &ib, WrapMode wrap)
-            : m_ib(&ib), m_tile(NULL), m_proxydata(NULL)
+            : m_ib(&ib)
         {
             init_ib (wrap);
             range_is_image ();
@@ -741,7 +606,7 @@ public:
 
         /// Construct valid iteration region from ImageBuf and ROI.
         IteratorBase (const ImageBuf &ib, const ROI &roi, WrapMode wrap)
-            : m_ib(&ib), m_tile(NULL), m_proxydata(NULL)
+            : m_ib(&ib)
         {
             init_ib (wrap);
             if (roi.defined()) {
@@ -761,7 +626,7 @@ public:
         IteratorBase (const ImageBuf &ib, int xbegin, int xend,
                       int ybegin, int yend, int zbegin, int zend,
                       WrapMode wrap)
-            : m_ib(&ib), m_tile(NULL), m_proxydata(NULL)
+            : m_ib(&ib)
         {
             init_ib (wrap);
             m_rng_xbegin = xbegin;
@@ -777,7 +642,7 @@ public:
               m_rng_xbegin(i.m_rng_xbegin), m_rng_xend(i.m_rng_xend), 
               m_rng_ybegin(i.m_rng_ybegin), m_rng_yend(i.m_rng_yend),
               m_rng_zbegin(i.m_rng_zbegin), m_rng_zend(i.m_rng_zend),
-              m_tile(NULL), m_proxydata(i.m_proxydata)
+              m_proxydata(i.m_proxydata)
         {
             init_ib (i.m_wrap);
         }
@@ -956,10 +821,10 @@ public:
     protected:
         friend class ImageBuf;
         friend class ImageBufImpl;
-        const ImageBuf *m_ib;
-        bool m_valid, m_exists;
-        bool m_deep;
-        bool m_localpixels;
+        const ImageBuf *m_ib = nullptr;
+        bool m_valid = false, m_exists = false;
+        bool m_deep = false;
+        bool m_localpixels = false;
         // Image boundaries
         int m_img_xbegin, m_img_xend, m_img_ybegin, m_img_yend,
             m_img_zbegin, m_img_zend;
@@ -967,13 +832,13 @@ public:
         int m_rng_xbegin, m_rng_xend, m_rng_ybegin, m_rng_yend,
             m_rng_zbegin, m_rng_zend;
         int m_x, m_y, m_z;
-        ImageCache::Tile *m_tile;
+        ImageCache::Tile *m_tile = nullptr;
         int m_tilexbegin, m_tileybegin, m_tilezbegin;
         int m_tilexend;
         int m_nchannels;
         size_t m_pixel_bytes;
-        char *m_proxydata;
-        WrapMode m_wrap;
+        char *m_proxydata = nullptr;
+        WrapMode m_wrap = WrapBlack;
 
         // Helper called by ctrs -- set up some locally cached values
         // that are copied or derived from the ImageBuf.

@@ -55,19 +55,19 @@
 
 OIIO_PLUGIN_NAMESPACE_BEGIN
 
-class GIFInput : public ImageInput {
+class GIFInput final : public ImageInput {
 public:
     GIFInput () { init (); }
     virtual ~GIFInput () { close (); }
-    virtual const char *format_name (void) const { return "gif"; }
-    virtual bool open (const std::string &name, ImageSpec &newspec);
-    virtual bool close (void);
-    virtual bool read_native_scanline (int y, int z, void *data);
-    virtual bool seek_subimage (int subimage, int miplevel, ImageSpec &newspec);
+    virtual const char *format_name (void) const override { return "gif"; }
+    virtual bool open (const std::string &name, ImageSpec &newspec) override;
+    virtual bool close (void) override;
+    virtual bool read_native_scanline (int y, int z, void *data) override;
+    virtual bool seek_subimage (int subimage, int miplevel, ImageSpec &newspec) override;
 
-    virtual int current_subimage (void) const { return m_subimage; }
+    virtual int current_subimage (void) const override { return m_subimage; }
     
-    virtual int current_miplevel (void) const {
+    virtual int current_miplevel (void) const override {
         // No mipmap support
         return 0;
     }
@@ -202,7 +202,7 @@ GIFInput::read_gif_extension (int ext_code, GifByteType *ext,
         int delay = (ext[3] << 8) | ext[2];
         if (delay) {
             int rat[2] = { 100, delay };
-            newspec.attribute ("FramesPerSecond", TypeDesc::TypeRational, &rat);
+            newspec.attribute ("FramesPerSecond", TypeRational, &rat);
             newspec.attribute ("oiio:Movie", 1);
         }
         

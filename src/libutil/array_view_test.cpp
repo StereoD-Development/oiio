@@ -27,7 +27,9 @@
   (This is the Modified BSD License)
 */
 
+#include <array>
 #include <iostream>
+#include <vector>
 
 #include <OpenImageIO/strided_ptr.h>
 #include <OpenImageIO/array_view.h>
@@ -51,9 +53,14 @@ void test_array_view ()
     OIIO_CHECK_EQUAL (&a.front(), &a[0]);
     OIIO_CHECK_EQUAL (&a.back(), &a[a.size()-1]);
 
-    // array_view<float>::const_iterator i = a.begin();
-    // OIIO_CHECK_EQUAL (*i, 0.0f);
-    // ++i;  OIIO_CHECK_EQUAL (*i, 1.0f);
+    OIIO_CHECK_EQUAL (a.begin(), &a[0]);
+    OIIO_CHECK_EQUAL (a.end(), &a[a.size()]);
+    OIIO_CHECK_EQUAL (a.cbegin(), &a[0]);
+    OIIO_CHECK_EQUAL (a.cend(), &a[a.size()]);
+
+    array_view<float>::const_iterator i = a.begin();
+    OIIO_CHECK_EQUAL (*i, 0.0f);
+    ++i;  OIIO_CHECK_EQUAL (*i, 1.0f);
 }
 
 
@@ -93,6 +100,36 @@ void test_array_view_initlist ()
 
 
 
+void test_array_view_vector ()
+{
+    // Try the array_view syntax with a view of a std::vector
+    std::vector<float> arr { 0, 1, 0, 2, 0, 3, 0, 4, 0, 5, 0, 0 };
+
+    array_view<float> a (arr);
+    OIIO_CHECK_EQUAL (a.size(), 12);
+    OIIO_CHECK_EQUAL (a[0], 0.0f);
+    OIIO_CHECK_EQUAL (a[1], 1.0f);
+    OIIO_CHECK_EQUAL (a[2], 0.0f);
+    OIIO_CHECK_EQUAL (a[3], 2.0f);
+}
+
+
+
+void test_array_view_stdarray ()
+{
+    // Try the array_view syntax with a view of a std::vector
+    std::array<float,12> arr { {0, 1, 0, 2, 0, 3, 0, 4, 0, 5, 0, 0} };
+
+    array_view<float> a (arr);
+    OIIO_CHECK_EQUAL (a.size(), 12);
+    OIIO_CHECK_EQUAL (a[0], 0.0f);
+    OIIO_CHECK_EQUAL (a[1], 1.0f);
+    OIIO_CHECK_EQUAL (a[2], 0.0f);
+    OIIO_CHECK_EQUAL (a[3], 2.0f);
+}
+
+
+
 
 void test_const_strided_ptr ()
 {
@@ -107,7 +144,7 @@ void test_const_strided_ptr ()
     OIIO_CHECK_EQUAL (a[3], 2.0f);
 
     // All the other tests are with stride of 2 elements
-    a = strided_ptr<const float> (&A[1], 2*sizeof(A[0]));
+    a = strided_ptr<const float> (&A[1], 2);
     OIIO_CHECK_EQUAL (*a, 1.0f);
     OIIO_CHECK_EQUAL (a[0], 1.0f);
     OIIO_CHECK_EQUAL (a[1], 2.0f);
@@ -140,7 +177,7 @@ void test_strided_ptr ()
     OIIO_CHECK_EQUAL (a[3], 2.0f);
 
     // All the other tests are with stride of 2 elements
-    a = strided_ptr<float> (&A[1], 2*sizeof(A[0]));
+    a = strided_ptr<float> (&A[1], 2);
     OIIO_CHECK_EQUAL (*a, 1.0f);
     OIIO_CHECK_EQUAL (a[0], 1.0f);
     OIIO_CHECK_EQUAL (a[1], 2.0f);
@@ -249,6 +286,8 @@ int main (int argc, char *argv[])
     test_array_view ();
     test_array_view_mutable ();
     test_array_view_initlist ();
+    test_array_view_vector ();
+    test_array_view_stdarray ();
     test_const_strided_ptr ();
     test_strided_ptr ();
     test_array_view_strided ();

@@ -344,7 +344,7 @@ TextureSystemImpl::init ()
     m_Mw2c.makeIdentity();
     m_gray_to_rgb = false;
     m_flip_t = false;
-    m_max_tile_channels = 5;
+    m_max_tile_channels = 6;
     delete hq_filter;
     hq_filter = Filter1D::create ("b-spline", 4);
     m_statslevel = 0;
@@ -379,6 +379,7 @@ TextureSystemImpl::getstats (int level, bool icstats) const
     m_imagecache->mergestats (stats);
 
     std::ostringstream out;
+    out.imbue (std::locale::classic());  // Force "C" locale with '.' decimal
     bool anytexture = (stats.texture_queries + stats.texture3d_queries +
                        stats.shadow_queries + stats.environment_queries);
     if (level > 0 && anytexture) {
@@ -452,32 +453,32 @@ TextureSystemImpl::attribute (string_view name, TypeDesc type,
     if (name == "options" && type == TypeDesc::STRING) {
         return optparser (*this, *(const char **)val);
     }
-    if (name == "worldtocommon" && (type == TypeDesc::TypeMatrix ||
+    if (name == "worldtocommon" && (type == TypeMatrix ||
                                     type == TypeDesc(TypeDesc::FLOAT,16))) {
         m_Mw2c = *(const Imath::M44f *)val;
         m_Mc2w = m_Mw2c.inverse();
         return true;
     }
-    if (name == "commontoworld" && (type == TypeDesc::TypeMatrix ||
+    if (name == "commontoworld" && (type == TypeMatrix ||
                                     type == TypeDesc(TypeDesc::FLOAT,16))) {
         m_Mc2w = *(const Imath::M44f *)val;
         m_Mw2c = m_Mc2w.inverse();
         return true;
     }
     if ((name == "gray_to_rgb" || name == "grey_to_rgb") &&
-        (type == TypeDesc::TypeInt)) {
+        (type == TypeInt)) {
         m_gray_to_rgb = *(const int *)val;
         return true;
     }
-    if (name == "flip_t" && type == TypeDesc::TypeInt) {
+    if (name == "flip_t" && type == TypeInt) {
         m_flip_t = *(const int *)val;
         return true;
     }
-    if (name == "m_max_tile_channels" && type == TypeDesc::TypeInt) {
+    if (name == "m_max_tile_channels" && type == TypeInt) {
         m_max_tile_channels = *(const int *)val;
         return true;
     }
-    if (name == "statistics:level" && type == TypeDesc::TypeInt) {
+    if (name == "statistics:level" && type == TypeInt) {
         m_statslevel = *(const int *)val;
         // DO NOT RETURN! pass the same message to the image cache
     }
@@ -492,26 +493,26 @@ bool
 TextureSystemImpl::getattribute (string_view name, TypeDesc type,
                                  void *val) const
 {
-    if (name == "worldtocommon" && (type == TypeDesc::TypeMatrix ||
+    if (name == "worldtocommon" && (type == TypeMatrix ||
                                     type == TypeDesc(TypeDesc::FLOAT,16))) {
         *(Imath::M44f *)val = m_Mw2c;
         return true;
     }
-    if (name == "commontoworld" && (type == TypeDesc::TypeMatrix ||
+    if (name == "commontoworld" && (type == TypeMatrix ||
                                     type == TypeDesc(TypeDesc::FLOAT,16))) {
         *(Imath::M44f *)val = m_Mc2w;
         return true;
     }
     if ((name == "gray_to_rgb" || name == "grey_to_rgb") &&
-        (type == TypeDesc::TypeInt)) {
+        (type == TypeInt)) {
         *(int *)val = m_gray_to_rgb;
         return true;
     }
-    if (name == "flip_t" && type == TypeDesc::TypeInt) {
+    if (name == "flip_t" && type == TypeInt) {
         *(int *)val = m_flip_t;
         return true;
     }
-    if (name == "m_max_tile_channels" && type == TypeDesc::TypeInt) {
+    if (name == "m_max_tile_channels" && type == TypeInt) {
         *(int *)val = m_max_tile_channels;
         return true;
     }
@@ -991,7 +992,8 @@ TextureSystemImpl::texture (TextureHandle *texture_handle_,
         if (s < 0) {
             error ("Unknown subimage \"%s\" in texture \"%s\"",
                    options.subimagename, texturefile->filename());
-            return false;
+            return missing_texture (options, nchannels, result,
+                                    dresultds, dresultdt);
         }
         options.subimage = s;
         options.subimagename.clear();
@@ -1094,6 +1096,80 @@ TextureSystemImpl::texture (TextureHandle *texture_handle_,
             *(vfloat4 *)dresultdt = -(*(vfloat4 *)dresultdt);
     }
 
+    return ok;
+}
+
+
+
+bool
+TextureSystemImpl::texture (ustring filename, TextureOptBatch &options,
+                            Tex::RunMask mask, const float *s, const float *t,
+                            const float *dsdx, const float *dtdx,
+                            const float *dsdy, const float *dtdy,
+                            int nchannels, float *result,
+                            float *dresultds, float *dresultdt)
+{
+    Perthread *thread_info = get_perthread_info();
+    TextureHandle *texture_handle = get_texture_handle (filename, thread_info);
+    return texture (texture_handle, thread_info, options, mask,
+                    s, t, dsdx, dtdx, dsdy, dtdy,
+                    nchannels, result, dresultds, dresultdt);
+}
+
+
+bool
+TextureSystemImpl::texture (TextureHandle *texture_handle,
+                            Perthread *thread_info, TextureOptBatch &options,
+                            Tex::RunMask mask, const float *s, const float *t,
+                            const float *dsdx, const float *dtdx,
+                            const float *dsdy, const float *dtdy,
+                            int nchannels, float *result,
+                            float *dresultds, float *dresultdt)
+{
+    // (FIXME) CHEAT! Texture points individually
+    TextureOpt opt;
+    opt.firstchannel = options.firstchannel;
+    opt.subimage = options.subimage;
+    opt.subimagename = options.subimagename;
+    opt.swrap = (TextureOpt::Wrap) options.swrap;
+    opt.twrap = (TextureOpt::Wrap) options.twrap;
+    opt.mipmode = (TextureOpt::MipMode) options.mipmode;
+    opt.interpmode = (TextureOpt::InterpMode) options.interpmode;
+    opt.anisotropic = options.anisotropic;
+    opt.conservative_filter = options.conservative_filter;
+    opt.fill = options.fill;
+    opt.missingcolor = options.missingcolor;
+    // rwrap not needed for 2D texture
+
+    bool ok = true;
+    Tex::RunMask bit = 1;
+    for (int i = 0; i < Tex::BatchWidth;  ++i, bit <<= 1) {
+        float r[4], drds[4], drdt[4];  // temp result
+        if (mask & bit) {
+            opt.sblur = options.sblur[i];
+            opt.tblur = options.tblur[i];
+            opt.swidth = options.swidth[i];
+            opt.twidth = options.twidth[i];
+            // rblur, rwidth not needed for 2D texture
+            if (dresultds) {
+                ok &= texture (texture_handle, thread_info,
+                               opt, s[i], t[i], dsdx[i], dtdx[i],
+                               dsdy[i], dtdy[i], nchannels, r, drds, drdt);
+                for (int c = 0; c < nchannels; ++c) {
+                    result[c*Tex::BatchWidth+i] = r[c];
+                    dresultds[c*Tex::BatchWidth+i] = drds[c];
+                    dresultdt[c*Tex::BatchWidth+i] = drdt[c];
+                }
+            } else {
+                ok &= texture (texture_handle, thread_info,
+                               opt, s[i], t[i], dsdx[i], dtdx[i],
+                               dsdy[i], dtdy[i], nchannels, r);
+                for (int c = 0; c < nchannels; ++c) {
+                    result[c*Tex::BatchWidth+i] = r[c];
+                }
+            }
+        }
+    }
     return ok;
 }
 
@@ -1844,40 +1920,6 @@ TextureSystemImpl::sample_closest (int nsamples, const float *s_,
         daccumdt_->clear();
     }
     return allok;
-}
-
-
-
-// return the greatest integer <= x, for 4 values at once
-OIIO_FORCEINLINE vint4 quick_floor (const vfloat4& x) {
-    // FIXME -- compare to simd::floati -- is this really the fastest?
-#if 0
-    // Even on SSE 4.1, this is actually very slightly slower!
-    // Continue to test on future architectures.
-    return floori(x);
-#else
-    vint4 b (x);  // truncates
-    vint4 isneg = bitcast_to_int (x < vfloat4::Zero());
-    return b + isneg;
-    // Trick here (thanks, Cycles, for letting me spy on your code): the
-    // comparison will return (int)-1 for components that are less than
-    // zero, and adding that is the same as subtracting one!
-#endif
-}
-
-
-// floatfrac for four sets of values at once.
-inline vfloat4 floorfrac (const vfloat4& x, vint4 * i) {
-    // FIXME -- is this really the fastest?
-#if 0
-    vfloat4 thefloor = floor(x);
-    *i = vint4(thefloor);
-    return x-thefloor;
-#else
-    vint4 thefloor = quick_floor (x);
-    *i = thefloor;
-    return x - vfloat4(thefloor);
-#endif
 }
 
 

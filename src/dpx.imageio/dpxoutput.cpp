@@ -48,12 +48,12 @@ static const int MAX_DPX_IMAGE_ELEMENTS = 8;  // max subimages in DPX spec
 
 
 
-class DPXOutput : public ImageOutput {
+class DPXOutput final : public ImageOutput {
 public:
     DPXOutput ();
     virtual ~DPXOutput ();
-    virtual const char * format_name (void) const { return "dpx"; }
-    virtual int supports (string_view feature) const {
+    virtual const char * format_name (void) const override { return "dpx"; }
+    virtual int supports (string_view feature) const override {
         if (feature == "multiimage"
             || feature == "alpha"
             || feature == "nchannels"
@@ -65,15 +65,15 @@ public:
         return false;
     }
     virtual bool open (const std::string &name, const ImageSpec &spec,
-                       OpenMode mode=Create);
+                       OpenMode mode=Create) override;
     virtual bool open (const std::string &name, int subimages,
-                       const ImageSpec *specs);
-    virtual bool close ();
+                       const ImageSpec *specs) override;
+    virtual bool close () override;
     virtual bool write_scanline (int y, int z, TypeDesc format,
-                                 const void *data, stride_t xstride);
+                                 const void *data, stride_t xstride) override;
     virtual bool write_tile (int x, int y, int z, TypeDesc format,
                              const void *data, stride_t xstride,
-                             stride_t ystride, stride_t zstride);
+                             stride_t ystride, stride_t zstride) override;
 
 private:
     OutStream *m_stream;
@@ -361,7 +361,7 @@ DPXOutput::open (const std::string &name, const ImageSpec &userspec,
     orient = DpxOrientations[clamp (orient, 0, 8)];
     m_dpx.header.SetImageOrientation ((dpx::Orientation)orient);
 
-    ParamValue *tc = m_spec.find_attribute("smpte:TimeCode", TypeDesc::TypeTimeCode, false);
+    ParamValue *tc = m_spec.find_attribute("smpte:TimeCode", TypeTimeCode, false);
     if (tc) {
         unsigned int *timecode = (unsigned int*) tc->data();
         m_dpx.header.timeCode = timecode[0];
@@ -377,7 +377,7 @@ DPXOutput::open (const std::string &name, const ImageSpec &userspec,
         m_dpx.header.userBits = m_spec.get_int_attribute ("dpx:UserBits", ~0);
     }
 
-    ParamValue *kc = m_spec.find_attribute("smpte:KeyCode", TypeDesc::TypeKeyCode, false);
+    ParamValue *kc = m_spec.find_attribute("smpte:KeyCode", TypeKeyCode, false);
     if (kc) {
         int *array = (int*) kc->data();
         set_keycode_values(array);

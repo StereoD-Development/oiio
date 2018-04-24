@@ -38,26 +38,13 @@
 
 #pragma once
 
+#include <utility> // std::forward
+
 // Make sure all platforms have the explicit sized integer types
-#if defined(_MSC_VER) && _MSC_VER < 1600
-   typedef __int8  int8_t;
-   typedef __int16 int16_t;
-   typedef __int32 int32_t;
-   typedef __int64 int64_t;
-   typedef unsigned __int8  uint8_t;
-   typedef unsigned __int16 uint16_t;
-# ifndef _UINT64_T
-   typedef unsigned __int32 uint32_t;
-   typedef unsigned __int64 uint64_t;
-#  define _UINT32_T
-#  define _UINT64_T
-# endif
-#else
-#  ifndef __STDC_LIMIT_MACROS
-#    define __STDC_LIMIT_MACROS  /* needed for some defs in stdint.h */
-#  endif
-#  include <cstdint>
+#ifndef __STDC_LIMIT_MACROS
+#  define __STDC_LIMIT_MACROS  /* needed for some defs in stdint.h */
 #endif
+#include <cstdint>
 
 #if defined(__FreeBSD__)
 #include <sys/param.h>
@@ -101,7 +88,7 @@
 // packages is compiling against OIIO and using these headers (OIIO may be
 // C++11 but the client package may be older, or vice versa -- use these two
 // symbols to differentiate these cases, when important).
-#if (__cplusplus >= 201700L)
+#if (__cplusplus >= 201703L)
 #  define OIIO_CPLUSPLUS_VERSION  17
 #  define OIIO_CONSTEXPR14        constexpr
 #elif (__cplusplus >= 201402L)
@@ -171,23 +158,36 @@
 #endif
 
 // Tests for MSVS versions, always 0 if not MSVS at all.
-#define OIIO_MSVS_AT_LEAST_2013 (defined(_MSC_VER) && _MSC_VER >= 1800)
-#define OIIO_MSVS_BEFORE_2013   (defined(_MSC_VER) && _MSC_VER <  1800)
-#define OIIO_MSVS_AT_LEAST_2015 (defined(_MSC_VER) && _MSC_VER >= 1900)
-#define OIIO_MSVS_BEFORE_2015   (defined(_MSC_VER) && _MSC_VER <  1900)
-
+#if defined(_MSC_VER)
+#  if _MSC_VER < 1800
+#    error "This version of OIIO is meant to work only with Visual Studio 2013 or later"
+#  endif
+#  define OIIO_MSVS_AT_LEAST_2013 (_MSC_VER >= 1800)
+#  define OIIO_MSVS_BEFORE_2013   (_MSC_VER <  1800)
+#  define OIIO_MSVS_AT_LEAST_2015 (_MSC_VER >= 1900)
+#  define OIIO_MSVS_BEFORE_2015   (_MSC_VER <  1900)
+#  define OIIO_MSVS_AT_LEAST_2017 (_MSC_VER >= 1910)
+#  define OIIO_MSVS_BEFORE_2017   (_MSC_VER <  1910)
+#else
+#  define OIIO_MSVS_AT_LEAST_2013 0
+#  define OIIO_MSVS_BEFORE_2013   0
+#  define OIIO_MSVS_AT_LEAST_2015 0
+#  define OIIO_MSVS_BEFORE_2015   0
+#  define OIIO_MSVS_AT_LEAST_2017 0
+#  define OIIO_MSVS_BEFORE_2017   0
+#endif
 
 
 /// allocates memory, equivalent of C99 type var_name[size]
-#define OIIO_ALLOCA(type, size) ((type*)alloca((size) * sizeof (type)))
+#define OIIO_ALLOCA(type, size) ((size) != 0 ? ((type*)alloca((size) * sizeof (type))) : nullptr)
 
 /// Deprecated (for namespace pollution reasons)
-#define ALLOCA(type, size) ((type*)alloca((size) * sizeof (type)))
+#define ALLOCA(type, size) ((size) != 0 ? ((type*)alloca((size) * sizeof (type))) : nullptr)
 
 
 // Define a macro that can be used for memory alignment.
-// I think that in a future world of C++1x compatibility, all these can
-// be replaced with [[ align(size) ]].
+// This macro is mostly obsolete and C++11 alignas() should be preferred
+// for new code.
 #if defined (__GNUC__) || __has_attribute(aligned)
 #  define OIIO_ALIGN(size) __attribute__((aligned(size)))
 #elif defined (_MSC_VER)
@@ -230,7 +230,9 @@
 // always inline. On many compilers regular 'inline' is only advisory. Put
 // this attribute before the function return type, just like you would use
 // 'inline'.
-#if defined(__GNUC__) || defined(__clang__) || __has_attribute(always_inline)
+#if defined(__CUDACC__)
+#  define OIIO_FORCEINLINE __inline__
+#elif defined(__GNUC__) || defined(__clang__) || __has_attribute(always_inline)
 #  define OIIO_FORCEINLINE inline __attribute__((always_inline))
 #elif defined(_MSC_VER) || defined(__INTEL_COMPILER)
 #  define OIIO_FORCEINLINE __forceinline
@@ -297,12 +299,33 @@
 #endif
 
 
+// OIIO_NO_SANITIZE_ADDRESS can be used to mark a function that you don't
+// want address sanitizer to catch. Only use this if you know there are
+// false positives that you can't easily get rid of.
+// This should work for any clang >= 3.3 and gcc >= 4.8, which are
+// guaranteed by our minimum requirements.
+#if defined(__clang__) || defined (__GNUC__)
+#  define OIIO_NO_SANITIZE_ADDRESS __attribute__((no_sanitize_address))
+#else
+#  define OIIO_NO_SANITIZE_ADDRESS
+#endif
+
+
 // Try to deduce endianness
 #if (defined(_WIN32) || defined(__i386__) || defined(__x86_64__))
 #  ifndef __LITTLE_ENDIAN__
 #    define __LITTLE_ENDIAN__ 1
 #    undef __BIG_ENDIAN__
 #  endif
+#endif
+
+
+// OIIO_HOSTDEVICE is used to supply the function decorators needed when
+// compiling for CUDA devices.
+#ifdef __CUDACC__
+#  define OIIO_HOSTDEVICE __host__ __device__
+#else
+#  define OIIO_HOSTDEVICE
 #endif
 
 
@@ -377,6 +400,26 @@ inline bool cpu_has_avx512er() {int i[4]; cpuid(i,7,0); return (i[1] & (1<<27)) 
 inline bool cpu_has_avx512cd() {int i[4]; cpuid(i,7,0); return (i[1] & (1<<28)) != 0; }
 inline bool cpu_has_avx512bw() {int i[4]; cpuid(i,7,0); return (i[1] & (1<<30)) != 0; }
 inline bool cpu_has_avx512vl() {int i[4]; cpuid(i,7,0); return (i[1] & (0x80000000 /*1<<31*/)) != 0; }
+
+// portable aligned malloc
+void* aligned_malloc(std::size_t size, std::size_t align);
+void  aligned_free(void* ptr);
+
+// basic wrappers to new/delete over-aligned types since this isn't guaranteed to be supported until C++17
+template <typename T, class... Args>
+inline T* aligned_new(Args&&... args) {
+    static_assert(alignof(T) > alignof(void*), "Type doesn't seem to be over-aligned, aligned_new is not required");
+    void* ptr = aligned_malloc(sizeof(T), alignof(T));
+    return ptr ? new (ptr) T(std::forward<Args>(args)...) : nullptr;
+}
+
+template <typename T>
+inline void aligned_delete(T* t) {
+    if (t) {
+        t->~T();
+        aligned_free(t);
+    }
+}
 
 
 OIIO_NAMESPACE_END

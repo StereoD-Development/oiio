@@ -53,20 +53,20 @@ OIIO_PLUGIN_NAMESPACE_BEGIN
 using namespace RLA_pvt;
 
 
-class RLAOutput : public ImageOutput {
+class RLAOutput final : public ImageOutput {
 public:
     RLAOutput ();
     virtual ~RLAOutput ();
-    virtual const char * format_name (void) const { return "rla"; }
-    virtual int supports (string_view feature) const;
+    virtual const char * format_name (void) const override { return "rla"; }
+    virtual int supports (string_view feature) const override;
     virtual bool open (const std::string &name, const ImageSpec &spec,
-                       OpenMode mode=Create);
-    virtual bool close ();
+                       OpenMode mode=Create) override;
+    virtual bool close () override;
     virtual bool write_scanline (int y, int z, TypeDesc format,
-                                 const void *data, stride_t xstride);
+                                 const void *data, stride_t xstride) override;
     virtual bool write_tile (int x, int y, int z, TypeDesc format,
                              const void *data, stride_t xstride,
-                             stride_t ystride, stride_t zstride);
+                             stride_t ystride, stride_t zstride) override;
 
 private:
     std::string m_filename;           ///< Stash the filename
@@ -377,8 +377,8 @@ RLAOutput::open (const std::string &name, const ImageSpec &userspec,
     // I think it's safe not to care until someone complains
     STRING_FIELD (Aspect, "rla:Aspect");
 
-    snprintf (m_rla.AspectRatio, sizeof(m_rla.AspectRatio), "%.10f",
-        m_spec.get_float_attribute ("PixelAspectRatio", 1.f));
+    float aspect = m_spec.get_float_attribute ("PixelAspectRatio", 1.f);
+    Strutil::safe_strcpy (m_rla.AspectRatio, Strutil::format("%.6f", aspect), sizeof(m_rla.AspectRatio));
     Strutil::safe_strcpy (m_rla.ColorChannel, m_spec.get_string_attribute ("rla:ColorChannel",
         "rgb"), sizeof(m_rla.ColorChannel));
     m_rla.FieldRendered = m_spec.get_int_attribute ("rla:FieldRendered", 0);

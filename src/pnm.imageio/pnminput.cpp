@@ -38,15 +38,15 @@
 
 OIIO_PLUGIN_NAMESPACE_BEGIN
 
-class PNMInput : public ImageInput {
+class PNMInput final : public ImageInput {
 public:
     PNMInput() { }
     virtual ~PNMInput() { close(); }
-    virtual const char* format_name (void) const { return "pnm"; }
-    virtual bool open (const std::string &name, ImageSpec &newspec);
-    virtual bool close ();
-    virtual int current_subimage (void) const { return 0; }
-    virtual bool read_native_scanline (int y, int z, void *data);
+    virtual const char* format_name (void) const override { return "pnm"; }
+    virtual bool open (const std::string &name, ImageSpec &newspec) override;
+    virtual bool close () override;
+    virtual int current_subimage (void) const override { return 0; }
+    virtual bool read_native_scanline (int y, int z, void *data) override;
 
 private:
     enum PNMType {

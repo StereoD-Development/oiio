@@ -46,16 +46,16 @@ OIIO_PLUGIN_NAMESPACE_BEGIN
 using namespace RLA_pvt;
 
 
-class RLAInput : public ImageInput {
+class RLAInput final : public ImageInput {
 public:
     RLAInput () { init(); }
     virtual ~RLAInput () { close(); }
-    virtual const char * format_name (void) const { return "rla"; }
-    virtual bool open (const std::string &name, ImageSpec &newspec);
-    virtual int current_subimage (void) const { return m_subimage; }
-    virtual bool seek_subimage (int subimage, int miplevel, ImageSpec &newspec);
-    virtual bool close ();
-    virtual bool read_native_scanline (int y, int z, void *data);
+    virtual const char * format_name (void) const override { return "rla"; }
+    virtual bool open (const std::string &name, ImageSpec &newspec) override;
+    virtual int current_subimage (void) const override { return m_subimage; }
+    virtual bool seek_subimage (int subimage, int miplevel, ImageSpec &newspec) override;
+    virtual bool close () override;
+    virtual bool read_native_scanline (int y, int z, void *data) override;
 
 private:
     std::string m_filename;           ///< Stash the filename
@@ -392,7 +392,7 @@ RLAInput::seek_subimage (int subimage, int miplevel, ImageSpec &newspec)
         }
     }
 
-    float aspect = atof (m_rla.AspectRatio);
+    float aspect = Strutil::stof (m_rla.AspectRatio);
     if (aspect > 0.f)
         m_spec.attribute ("PixelAspectRatio", aspect);
 

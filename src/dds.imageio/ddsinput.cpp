@@ -48,18 +48,18 @@ using namespace DDS_pvt;
 // uncomment the following define to enable 3x2 cube map layout
 //#define DDS_3X2_CUBE_MAP_LAYOUT
 
-class DDSInput : public ImageInput {
+class DDSInput final : public ImageInput {
 public:
     DDSInput () { init(); }
     virtual ~DDSInput () { close(); }
-    virtual const char * format_name (void) const { return "dds"; }
-    virtual bool open (const std::string &name, ImageSpec &newspec);
-    virtual bool close ();
-    virtual int current_subimage (void) const { return m_subimage; }
-    virtual int current_miplevel (void) const { return m_miplevel; }
-    virtual bool seek_subimage (int subimage, int miplevel, ImageSpec &newspec);
-    virtual bool read_native_scanline (int y, int z, void *data);
-    virtual bool read_native_tile (int x, int y, int z, void *data);
+    virtual const char * format_name (void) const override { return "dds"; }
+    virtual bool open (const std::string &name, ImageSpec &newspec) override;
+    virtual bool close () override;
+    virtual int current_subimage (void) const override { return m_subimage; }
+    virtual int current_miplevel (void) const override{ return m_miplevel; }
+    virtual bool seek_subimage (int subimage, int miplevel, ImageSpec &newspec) override;
+    virtual bool read_native_scanline (int y, int z, void *data) override;
+    virtual bool read_native_tile (int x, int y, int z, void *data) override;
 
 private:
     std::string m_filename;           ///< Stash the filename

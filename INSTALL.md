@@ -23,14 +23,26 @@ Dependencies
 
 NEW or CHANGED dependencies since the last major release are **bold**.
 
-### Required dependencies
+### Required dependencies -- OIIO will not build at all without these
 
- * **C++11** (gcc 4.8.2, clang 3.3, or MSVS 2013)
- * **Boost >= 1.53**
- * **CMake >= 3.0**
+ * C++11 (should also build with C++14 and C++17)
+ * Compilers: gcc 4.8.2 - gcc 7, clang 3.3 - 6.0, MSVS 2013 - 2017, icc version 13 or higher
+ * Boost >= 1.53 (tested up through 1.67)
+ * CMake >= 3.2.2 (tested up through 3.11)
+ * OpenEXR >= 2.0 (recommended: 2.2)
+ * libTIFF >= 3.9 (recommended: 4.0+)
 
-### Optional dependencies
- * **Qt >= 5.6**  (Only needed if you want the `iv` viewer.)
+### Optional dependencies -- features may be disabled if not found
+ * If you are building the `iv` viewer (which will be disabled if any of
+   these are not found):
+     * Qt >= 5.6
+     * OpenGL
+ * If you are building the Python bindings or running the testsuite:
+     * Python >= 2.7 (or 3.x)
+     * **NumPy**
+     * **pybind11** (but OIIO will auto-download it if not found)
+ * libRaw >= 0.17 ("RAW" image reading will be disabled if not found)
+ * ffmpeg >= 3.0 (tested through 4.0)
 
 
 
@@ -40,8 +52,7 @@ Building OpenImageIO on Linux or OS X
 The following dependencies must be installed to build the core of
 OpenImageIO: Boost, libjpeg, libtiff, libpng and OpenEXR.  These can be
 installed using the standard package managers on your system.
-Optionally, to build the image viewing tools, you will need Qt, OpenGL,
-and GLEW.
+Optionally, to build the image viewing tools, you will need Qt and OpenGL.
 
 On OS X, these dependencies can be installed using Fink, MacPorts or
 Homebrew.  After installation of any of these package installers, use
@@ -88,20 +99,19 @@ Make targets you should know about:
 
 Additionally, a few helpful modifiers alter some build-time options:
 
-|  Target             |  Command                                           |
-| :------------------ | -------------------------------------------------- |
+|  Target                   |  Command                                           |
+| :------------------------ | -------------------------------------------------- |
 | make VERBOSE=1 ...        |  Show all compilation commands
 | make STOP_ON_WARNING=0    |  Do not stop building if compiler warns
 | make EMBEDPLUGINS=0 ...   |  Don't compile the plugins into libOpenImageIO
 | make USE_OPENGL=0 ...     |  Skip anything that needs OpenGL
 | make USE_QT=0 ...         |  Skip anything that needs Qt
 | make MYCC=xx MYCXX=yy ... |  Use custom compilers
-| make FORCE_OPENGL_1=1 ... |  Force iv to use OpenGL's fixed pipeline
 | make USE_PYTHON=0 ...     |  Don't build the Python binding
 | make BUILDSTATIC=1 ...    |  Build static library instead of shared
 | make LINKSTATIC=1 ...     |  Link with static external libraries when possible
 | make SOVERSION=nn ...     |  Include the specifed major version number in the shared object metadata
-|  make NAMESPACE=name      |   Wrap everything in another namespace
+| make NAMESPACE=name       |   Wrap everything in another namespace
 
 The command 'make help' will list all possible options.
 
@@ -215,9 +225,6 @@ D:\OIIO\external\dist\windows\zlib-1.2.3 directory. If it can't find
 ZLIB and PNG, add
 D:\OIIO\external\dist\windows\zlib-1.2.3;D:\OIIO\external\dist\windows\libpng-1.2.3.
 
-Also, if cmake won't find GLEW set up GLEW_INCLUDES and GLEW_LIBRARIES
-in cmake-gui. Don't add them (they are already added), just set them.
-
 
 Test Images
 -----------
@@ -233,7 +240,7 @@ Also, there are collections of images for some of the file formats we
 support, and make test expects them to also be present. To run full tests,
 you will need to download and unpack the test image collections from:
 
-* http://www.remotesensing.org/libtiff/images.html
+* http://www.simplesystems.org/libtiff/images.html
 * http://www.openexr.com/downloads.html
 * http://www.itu.int/net/ITU-T/sigdb/speimage/ImageForm-s.aspx?val=10100803
 * http://www.cv.nrao.edu/fits/data/tests/

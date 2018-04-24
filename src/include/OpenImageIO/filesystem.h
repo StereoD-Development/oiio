@@ -72,6 +72,7 @@ typedef std::ifstream ifstream;
 typedef std::ofstream ofstream;
 #endif
 
+
 /// @namespace Filesystem
 ///
 /// @brief Platform-independent utilities for manipulating file names,

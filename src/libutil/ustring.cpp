@@ -182,14 +182,14 @@ private:
         return result;
     }
 
-    OIIO_CACHE_ALIGN ustring_mutex_t mutex;
     size_t mask;
     ustring::TableRep** entries;
     size_t num_entries;
     char* pool;
     size_t pool_offset;
     size_t memory_usage;
-    OIIO_CACHE_ALIGN size_t num_lookups;
+    size_t num_lookups;
+    ustring_mutex_t mutex;
 };
 
 #if 0
@@ -209,22 +209,22 @@ struct UstringTable {
 
     size_t get_memory_usage() {
         size_t mem = 0;
-        for (int i = 0; i < NUM_BINS; i++)
-            mem += bins[i].get_memory_usage();
+        for (auto& bin : bins)
+            mem += bin.get_memory_usage();
         return mem;
     }
 
     size_t get_num_entries() {
         size_t num = 0;
-        for (int i = 0; i < NUM_BINS; i++)
-            num += bins[i].get_num_entries();
+        for (auto& bin : bins)
+            num += bin.get_num_entries();
         return num;
     }
 
     size_t get_num_lookups() {
         size_t num = 0;
-        for (int i = 0; i < NUM_BINS; i++)
-            num += bins[i].get_num_lookups();
+        for (auto& bin : bins)
+            num += bin.get_num_lookups();
         return num;
     }
 
@@ -406,6 +406,7 @@ ustring::getstats (bool verbose)
 {
     UstringTable &table (ustring_table());
     std::ostringstream out;
+    out.imbue (std::locale::classic());  // Force "C" locale with '.' decimal
     size_t n_l = table.get_num_lookups();
     size_t n_e = table.get_num_entries();
     size_t mem = table.get_memory_usage();

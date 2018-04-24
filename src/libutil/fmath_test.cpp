@@ -29,6 +29,7 @@
 */
 
 #include <vector>
+#include <iostream>
 
 #include <OpenEXR/half.h>
 
@@ -39,10 +40,11 @@
 #include <OpenImageIO/unittest.h>
 #include <OpenImageIO/imagebufalgo_util.h>
 #include <OpenImageIO/argparse.h>
+#include <OpenImageIO/benchmark.h>
 
 using namespace OIIO;
 
-static int iterations = 10;
+static int iterations = 1000000;
 static int ntrials = 5;
 static bool verbose = false;
 
@@ -116,6 +118,7 @@ test_int_helpers ()
     OIIO_CHECK_EQUAL (pow2rounddown(8), 8);
 
     // round_to_multiple
+    OIIO_CHECK_EQUAL (round_to_multiple(0, 5), 0);
     OIIO_CHECK_EQUAL (round_to_multiple(1, 5), 5);
     OIIO_CHECK_EQUAL (round_to_multiple(2, 5), 5);
     OIIO_CHECK_EQUAL (round_to_multiple(3, 5), 5);
@@ -143,6 +146,39 @@ test_int_helpers ()
 
 
 
+void
+test_math_functions ()
+{
+    std::cout << "Testing math functions\n";
+    Benchmarker bench;
+
+    OIIO_CHECK_EQUAL (ifloor(0.0f), 0);
+    OIIO_CHECK_EQUAL (ifloor(-0.999f), -1);
+    OIIO_CHECK_EQUAL (ifloor(-1.0f), -1);
+    OIIO_CHECK_EQUAL (ifloor(-1.001f), -2);
+    OIIO_CHECK_EQUAL (ifloor(0.999f), 0);
+    OIIO_CHECK_EQUAL (ifloor(1.0f), 1);
+    OIIO_CHECK_EQUAL (ifloor(1.001f), 1);
+    float fval = 1.1; clobber(fval);
+    bench ("ifloor", [&](){ return DoNotOptimize(ifloor(fval)); });
+
+    int ival;
+    OIIO_CHECK_EQUAL_APPROX (floorfrac(0.0f,    &ival), 0.0f);   OIIO_CHECK_EQUAL (ival, 0);
+    OIIO_CHECK_EQUAL_APPROX (floorfrac(-0.999f, &ival), 0.001f); OIIO_CHECK_EQUAL (ival, -1);
+    OIIO_CHECK_EQUAL_APPROX (floorfrac(-1.0f,   &ival), 0.0f);   OIIO_CHECK_EQUAL (ival, -1);
+    OIIO_CHECK_EQUAL_APPROX (floorfrac(-1.001f, &ival), 0.999f); OIIO_CHECK_EQUAL (ival, -2);
+    OIIO_CHECK_EQUAL_APPROX (floorfrac(0.999f,  &ival), 0.999f); OIIO_CHECK_EQUAL (ival, 0);
+    OIIO_CHECK_EQUAL_APPROX (floorfrac(1.0f,    &ival), 0.0f);   OIIO_CHECK_EQUAL (ival, 1);
+    OIIO_CHECK_EQUAL_APPROX (floorfrac(1.001f,  &ival), 0.001f); OIIO_CHECK_EQUAL (ival, 1);
+    bench ("floorfrac", [&](float x){ return DoNotOptimize(floorfrac(x,&ival)); }, fval);
+
+    OIIO_CHECK_EQUAL (sign(3.1f), 1.0f);
+    OIIO_CHECK_EQUAL (sign(-3.1f), -1.0f);
+    OIIO_CHECK_EQUAL (sign(0.0f), 0.0f);
+}
+
+
+
 // Convert T to F to T, make sure value are preserved round trip
 template<typename T, typename F>
 void test_convert_type (double tolerance = 1e-6)
@@ -159,7 +195,7 @@ void test_convert_type (double tolerance = 1e-6)
             }
         }
     } else {
-        for (float i = 0.0f; i <= 1.0f;  i += 0.001) {
+        for (float i = 0.0f; i <= 1.0f;  i += 0.001) {   // NOLINT
             T in = (T)i;
             F f = convert_type<T,F> (in);
             T out = convert_type<F,T> (f);
@@ -184,6 +220,7 @@ void do_convert_type (const std::vector<S> &svec, std::vector<D> &dvec)
 template<typename S, typename D>
 void benchmark_convert_type ()
 {
+    const size_t iterations = 10;
     const size_t size = 10000000;
     const S testval(1.0);
     std::vector<S> svec (size, testval);
@@ -276,6 +313,8 @@ int main (int argc, char *argv[])
     getargs (argc, argv);
 
     test_int_helpers ();
+
+    test_math_functions ();
 
     std::cout << "\nround trip convert char/float/char\n";
     test_convert_type<char,float> ();

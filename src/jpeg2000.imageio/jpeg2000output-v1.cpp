@@ -38,7 +38,7 @@ OIIO_PLUGIN_NAMESPACE_BEGIN
 
 static void openjpeg_dummy_callback(const char*, void*) {}
 
-class Jpeg2000Output : public ImageOutput {
+class Jpeg2000Output final : public ImageOutput {
  public:
     Jpeg2000Output () { init (); }
     virtual ~Jpeg2000Output () { close (); }
@@ -48,7 +48,7 @@ class Jpeg2000Output : public ImageOutput {
         // FIXME: we should support Exif/IPTC, but currently don't.
     }
     virtual bool open (const std::string &name, const ImageSpec &spec,
-                       OpenMode mode=Create);
+                       OpenMode mode=Create) override;
     virtual bool close ();
     virtual bool write_scanline (int y, int z, TypeDesc format,
                                  const void *data, stride_t xstride);

@@ -21,13 +21,15 @@ echo "Before my brew installs:"
 brew list --versions
 brew install ccache cmake
 brew install ilmbase openexr
-brew install boost-python
 brew install opencolorio
 brew install freetype
 brew install libraw libpng webp jpeg-turbo
 brew install openjpeg
 brew install dcmtk
 brew install qt
+brew upgrade python
+brew install pybind11 numpy
+brew link --overwrite numpy
 if [ "$LINKSTATIC" == "1" ] ; then
     brew install little-cms2 tinyxml szip
     brew install homebrew/dupes/bzip2

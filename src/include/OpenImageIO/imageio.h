@@ -107,6 +107,119 @@ typedef ParamValueList ImageIOParameterList;
 
 
 
+/// Helper struct describing a region of interest in an image.
+/// The region is [xbegin,xend) x [begin,yend) x [zbegin,zend),
+/// with the "end" designators signifying one past the last pixel,
+/// a la STL style.
+struct ROI {
+    int xbegin, xend, ybegin, yend, zbegin, zend;
+    int chbegin, chend;
+
+    /// Default constructor is an undefined region.
+    ///
+    constexpr ROI () : xbegin(std::numeric_limits<int>::min()), xend(0),
+             ybegin(0), yend(0), zbegin(0), zend(0), chbegin(0), chend(0)
+    { }
+
+    /// Constructor with an explicitly defined region.
+    ///
+    constexpr ROI (int xbegin, int xend, int ybegin, int yend,
+         int zbegin=0, int zend=1, int chbegin=0, int chend=10000)
+        : xbegin(xbegin), xend(xend), ybegin(ybegin), yend(yend),
+          zbegin(zbegin), zend(zend), chbegin(chbegin), chend(chend)
+    { }
+
+    /// Is a region defined?
+    constexpr bool defined () const { return (xbegin != std::numeric_limits<int>::min()); }
+
+    // Region dimensions.
+    constexpr int width () const { return xend - xbegin; }
+    constexpr int height () const { return yend - ybegin; }
+    constexpr int depth () const { return zend - zbegin; }
+
+    /// Number of channels in the region.  Beware -- this defaults to a
+    /// huge number, and to be meaningful you must consider
+    /// std::min (imagebuf.nchannels(), roi.nchannels()).
+    constexpr int nchannels () const { return chend - chbegin; }
+
+    /// Total number of pixels in the region.
+    constexpr imagesize_t npixels () const {
+        return defined()
+            ? imagesize_t(width()) * imagesize_t(height()) * imagesize_t(depth())
+            : 0;
+    }
+
+    /// Documentary sugar -- although the static ROI::All() function
+    /// simply returns the results of the default ROI constructor, it
+    /// makes it very clear when using as a default function argument
+    /// that it means "all" of the image.  For example,
+    ///     float myfunc (ImageBuf &buf, ROI roi = ROI::All());
+    /// Doesn't that make it abundantly clear?
+    static constexpr ROI All () { return ROI(); }
+
+    /// Test equality of two ROIs
+    friend constexpr bool operator== (const ROI &a, const ROI &b) {
+        return (a.xbegin == b.xbegin && a.xend == b.xend &&
+                a.ybegin == b.ybegin && a.yend == b.yend &&
+                a.zbegin == b.zbegin && a.zend == b.zend &&
+                a.chbegin == b.chbegin && a.chend == b.chend);
+    }
+    /// Test inequality of two ROIs
+    friend constexpr bool operator!= (const ROI &a, const ROI &b) {
+        return (a.xbegin != b.xbegin || a.xend != b.xend ||
+                a.ybegin != b.ybegin || a.yend != b.yend ||
+                a.zbegin != b.zbegin || a.zend != b.zend ||
+                a.chbegin != b.chbegin || a.chend != b.chend);
+    }
+
+    /// Test if the coordinate is within the ROI.
+    constexpr bool contains (int x, int y, int z=0, int ch=0) const {
+        return x >= xbegin && x < xend && y >= ybegin && y < yend
+            && z >= zbegin && z < zend && ch >= chbegin && ch < chend;
+    }
+
+    /// Test if another ROI is entirely within our ROI.
+    constexpr bool contains (const ROI& other) const {
+        return (other.xbegin >= xbegin && other.xend <= xend &&
+                other.ybegin >= ybegin && other.yend <= yend &&
+                other.zbegin >= zbegin && other.zend <= zend &&
+                other.chbegin >= chbegin && other.chend <= chend);
+    }
+
+    /// Stream output of the range
+    friend std::ostream & operator<< (std::ostream &out, const ROI &roi) {
+        out << roi.xbegin << ' ' << roi.xend << ' ' << roi.ybegin << ' '
+            << roi.yend << ' ' << roi.zbegin << ' ' << roi.zend << ' '
+            << roi.chbegin << ' ' << roi.chend;
+        return out;
+    }
+};
+
+
+
+/// Union of two regions, the smallest region containing both.
+inline constexpr ROI roi_union (const ROI &A, const ROI &B) {
+    return (A.defined() && B.defined())
+        ? ROI (std::min (A.xbegin,  B.xbegin),  std::max (A.xend,  B.xend),
+               std::min (A.ybegin,  B.ybegin),  std::max (A.yend,  B.yend),
+               std::min (A.zbegin,  B.zbegin),  std::max (A.zend,  B.zend),
+               std::min (A.chbegin, B.chbegin), std::max (A.chend, B.chend))
+        : (A.defined() ? A : B);
+}
+
+/// Intersection of two regions.
+inline constexpr ROI roi_intersection (const ROI &A, const ROI &B) {
+    return (A.defined() && B.defined())
+        ? ROI (std::max (A.xbegin,  B.xbegin),  std::min (A.xend,  B.xend),
+               std::max (A.ybegin,  B.ybegin),  std::min (A.yend,  B.yend),
+               std::max (A.zbegin,  B.zbegin),  std::min (A.zend,  B.zend),
+               std::max (A.chbegin, B.chbegin), std::min (A.chend, B.chend))
+        : (A.defined() ? A : B);
+}
+
+
+
+
 /// ImageSpec describes the data format of an image --
 /// dimensions, layout, number and meanings of image channels.
 class OIIO_API ImageSpec {
@@ -359,8 +472,7 @@ public:
     /// For a given parameter p, format the value nicely as a string.  If
     /// 'human' is true, use especially human-readable explanations (units,
     /// or decoding of values) for certain known metadata.
-    static std::string metadata_val (const ParamValue &p,
-                              bool human=false);
+    static std::string metadata_val (const ParamValue &p, bool human=false);
 
     enum SerialFormat  { SerialText, SerialXML };
     enum SerialVerbose { SerialBrief, SerialDetailed, SerialDetailedHuman };
@@ -417,7 +529,44 @@ public:
 
     /// Return the index of the named channel, or -1 if not found.
     int channelindex (string_view name) const;
+
+    /// Return pixel data window for this ImageSpec as a ROI.
+    ROI roi () const {
+        return ROI (x, x+width, y, y+height, z, z+depth, 0, nchannels);
+    }
+
+    /// Return full/display window for this ImageSpec as a ROI.
+    ROI roi_full () const {
+        return ROI (full_x, full_x+full_width, full_y, full_y+full_height,
+                    full_z, full_z+full_depth, 0, nchannels);
+    }
+
+    /// Set pixel data window parameters (x, y, z, width, height, depth)
+    /// for this ImageSpec from an ROI.
+    /// Does NOT change the channels of the spec, regardless of r.
+    void set_roi (const ROI &r) {
+        x = r.xbegin;
+        y = r.ybegin;
+        z = r.zbegin;
+        width = r.width();
+        height = r.height();
+        depth = r.depth();
+    }
+
+    /// Set full/display window parameters (full_x, full_y, full_z,
+    /// full_width, full_height, full_depth) for this ImageSpec from an ROI.
+    /// Does NOT change the channels of the spec, regardless of r.
+    void set_roi_full (const ROI &r) {
+        full_x = r.xbegin;
+        full_y = r.ybegin;
+        full_z = r.zbegin;
+        full_width = r.width();
+        full_height = r.height();
+        full_depth = r.depth();
+    }
+
 };
+
 
 
 
@@ -441,6 +590,16 @@ public:
     /// inferred one does not open the file, every known ImageInput type
     /// will be tried until one is found that will open the file.
     static ImageInput *open (const std::string &filename,
+                             const ImageSpec *config = NULL);
+
+    /// Given a blob of memory as a buffer, either mem-mapped or streamed
+    /// in, open the file as though we gave it a filename. Use the
+    /// format_name provided to work with our known plugins. This is great
+    /// for fast-decompression when many images have been loaded into
+    /// memory. Depending on the format, this may help with the overall
+    /// footprint.
+    static ImageInput *open (char *buffer, size_t size,
+                             const char *format_name,
                              const ImageSpec *config = NULL);
 
     /// Create and return an ImageInput implementation that is willing
@@ -517,6 +676,12 @@ public:
     /// just to ignore config and call regular open(name,newspec).
     virtual bool open (const std::string &name, ImageSpec &newspec,
                        const ImageSpec & /*config*/) { return open(name,newspec); }
+
+    /// The ability to read and work with an in-memory chunk of data that
+    /// represents the files themselves.
+    virtual bool open (char *buffer, size_t size, ImageSpec &newspec) { return false; };
+    virtual bool open (char *buffer, size_t size, ImageSpec &newspec,
+                       const ImageSpec & /*config*/) { return open(buffer,size,newspec); }
 
     /// Return a reference to the image format specification of the
     /// current subimage/MIPlevel.  Note that the contents of the spec
@@ -805,7 +970,6 @@ public:
     /// spec.depth pixels, all channels, into deepdata.
     virtual bool read_native_deep_image (DeepData &deepdata);
 
-
     /// General message passing between client and image input server
     ///
     virtual int send_to_input (const char *format, ...);
@@ -851,6 +1015,8 @@ private:
     void append_error (const std::string& message) const; // add to m_errmessage
     static ImageInput *create (const std::string &filename, bool do_open,
                                const std::string &plugin_searchpath);
+    static ImageInput *create (char *buffer, size_t size, bool do_open,
+                               const std::string &format_name);
 
 };
 
@@ -1017,7 +1183,6 @@ public:
     /// the distance (in bytes) between successive pixels, scanlines,
     /// and volumetric slices, respectively.  Strides set to AutoStride
     /// imply 'contiguous' data in the shape of a full tile, i.e.,
-
     ///     xstride == spec.nchannels*format.size()
     ///     ystride == xstride*spec.tile_width
     ///     zstride == ystride*spec.tile_height
@@ -1280,6 +1445,12 @@ OIIO_API std::string geterror ();
 ///             The default is 0 for release builds, 1 for DEBUG builds,
 ///             but also may be overridden by the OPENIMAGEIO_DEBUG env
 ///             variable.
+///     int log_times
+///             When nonzero, various internals will record how much total
+///             time they spend in execution. If the value is >= 2, these
+///             times will be printed upon exit. Thd default is 0, but will
+///             be initialized to the value of the OPENIMAGEIO_LOG_TIMES
+///             environment variable, if it exists.
 ///     int tiff:half
 ///             When nonzero, allows TIFF to write 'half' pixel data.
 ///             N.B. Most apps may not read these correctly, but OIIO will.
@@ -1288,14 +1459,14 @@ OIIO_API std::string geterror ();
 OIIO_API bool attribute (string_view name, TypeDesc type, const void *val);
 // Shortcuts for common types
 inline bool attribute (string_view name, int val) {
-    return attribute (name, TypeDesc::TypeInt, &val);
+    return attribute (name, TypeInt, &val);
 }
 inline bool attribute (string_view name, float val) {
-    return attribute (name, TypeDesc::TypeFloat, &val);
+    return attribute (name, TypeFloat, &val);
 }
 inline bool attribute (string_view name, string_view val) {
     const char *s = val.c_str();
-    return attribute (name, TypeDesc::TypeString, &s);
+    return attribute (name, TypeString, &s);
 }
 
 /// Get the named global attribute of OpenImageIO, store it in *val.
@@ -1328,6 +1499,8 @@ inline bool attribute (string_view name, string_view val) {
 ///             the library. Semicolons separate the lists for formats. For
 ///             example,
 ///              "jpeg:jpeg-turbo 1.5.1;png:libpng 1.6.29;gif:gif_lib 5.1.4"
+///     string "timing_report"
+///             A string containing the report of all the log_times.
 ///     string "oiio:simd"
 ///             Comma-separated list of the SIMD-related capabilities
 ///             enabled when the OIIO library was built. For example,
@@ -1339,33 +1512,33 @@ inline bool attribute (string_view name, string_view val) {
 OIIO_API bool getattribute (string_view name, TypeDesc type, void *val);
 // Shortcuts for common types
 inline bool getattribute (string_view name, int &val) {
-    return getattribute (name, TypeDesc::TypeInt, &val);
+    return getattribute (name, TypeInt, &val);
 }
 inline bool getattribute (string_view name, float &val) {
-    return getattribute (name, TypeDesc::TypeFloat, &val);
+    return getattribute (name, TypeFloat, &val);
 }
 inline bool getattribute (string_view name, char **val) {
-    return getattribute (name, TypeDesc::TypeString, val);
+    return getattribute (name, TypeString, val);
 }
 inline bool getattribute (string_view name, std::string &val) {
     ustring s;
-    bool ok = getattribute (name, TypeDesc::TypeString, &s);
+    bool ok = getattribute (name, TypeString, &s);
     if (ok)
         val = s.string();
     return ok;
 }
 inline int get_int_attribute (string_view name, int defaultval=0) {
     int val;
-    return getattribute (name, TypeDesc::TypeInt, &val) ? val : defaultval;
+    return getattribute (name, TypeInt, &val) ? val : defaultval;
 }
 inline float get_float_attribute (string_view name, float defaultval=0) {
     float val;
-    return getattribute (name, TypeDesc::TypeFloat, &val) ? val : defaultval;
+    return getattribute (name, TypeFloat, &val) ? val : defaultval;
 }
 inline string_view get_string_attribute (string_view name,
                                  string_view defaultval = string_view()) {
     ustring val;
-    return getattribute (name, TypeDesc::TypeString, &val) ? string_view(val) : defaultval;
+    return getattribute (name, TypeString, &val) ? string_view(val) : defaultval;
 }
 
 
@@ -1454,55 +1627,6 @@ OIIO_API bool copy_image (int nchannels, int width, int height, int depth,
                           void *dst, stride_t dst_xstride,
                           stride_t dst_ystride, stride_t dst_zstride);
 
-/// Decode a raw Exif data block and save all the metadata in an
-/// ImageSpec.  Return true if all is ok, false if the exif block was
-/// somehow malformed.  The binary data pointed to by 'exif' should
-/// start with a TIFF directory header.
-OIIO_API bool decode_exif (string_view exif, ImageSpec &spec);
-OIIO_API bool decode_exif (const void *exif, int length, ImageSpec &spec); // DEPRECATED (1.8)
-
-/// Construct an Exif data block from the ImageSpec, appending the Exif 
-/// data as a big blob to the char vector.
-OIIO_API void encode_exif (const ImageSpec &spec, std::vector<char> &blob);
-
-/// Helper: For the given OIIO metadata attribute name, look up the Exif tag
-/// ID, TIFFDataType (expressed as an int), and count. Return true and fill
-/// in the fields if found, return false if not found.
-OIIO_API bool exif_tag_lookup (string_view name, int &tag,
-                               int &tifftype, int &count);
-
-/// Add metadata to spec based on raw IPTC (International Press
-/// Telecommunications Council) metadata in the form of an IIM
-/// (Information Interchange Model).  Return true if all is ok, false if
-/// the iptc block was somehow malformed.  This is a utility function to
-/// make it easy for multiple format plugins to support embedding IPTC
-/// metadata without having to duplicate functionality within each
-/// plugin.  Note that IIM is actually considered obsolete and is
-/// replaced by an XML scheme called XMP.
-OIIO_API bool decode_iptc_iim (const void *iptc, int length, ImageSpec &spec);
-
-/// Find all the IPTC-amenable metadata in spec and assemble it into an
-/// IIM data block in iptc.  This is a utility function to make it easy
-/// for multiple format plugins to support embedding IPTC metadata
-/// without having to duplicate functionality within each plugin.  Note
-/// that IIM is actually considered obsolete and is replaced by an XML
-/// scheme called XMP.
-OIIO_API void encode_iptc_iim (const ImageSpec &spec, std::vector<char> &iptc);
-
-/// Add metadata to spec based on XMP data in an XML block.  Return true
-/// if all is ok, false if the xml was somehow malformed.  This is a
-/// utility function to make it easy for multiple format plugins to
-/// support embedding XMP metadata without having to duplicate
-/// functionality within each plugin.
-OIIO_API bool decode_xmp (const std::string &xml, ImageSpec &spec);
-
-/// Find all the relavant metadata (IPTC, Exif, etc.) in spec and
-/// assemble it into an XMP XML string.  This is a utility function to
-/// make it easy for multiple format plugins to support embedding XMP
-/// metadata without having to duplicate functionality within each
-/// plugin.  If 'minimal' is true, then don't encode things that would
-/// be part of ordinary TIFF or exif tags.
-OIIO_API std::string encode_xmp (const ImageSpec &spec, bool minimal=false);
 
 // All the wrap_foo functions implement a wrap mode, wherein coord is
 // altered to be origin <= coord < origin+width.  The return value

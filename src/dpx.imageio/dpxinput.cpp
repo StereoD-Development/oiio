@@ -41,17 +41,17 @@
 OIIO_PLUGIN_NAMESPACE_BEGIN
 
 
-class DPXInput : public ImageInput {
+class DPXInput final : public ImageInput {
 public:
     DPXInput () : m_stream(NULL), m_dataPtr(NULL) { init(); }
     virtual ~DPXInput () { close(); }
-    virtual const char * format_name (void) const { return "dpx"; }
-    virtual bool valid_file (const std::string &filename) const;
-    virtual bool open (const std::string &name, ImageSpec &newspec);
-    virtual bool close ();
-    virtual int current_subimage (void) const { return m_subimage; }
-    virtual bool seek_subimage (int subimage, int miplevel, ImageSpec &newspec);
-    virtual bool read_native_scanline (int y, int z, void *data);
+    virtual const char * format_name (void) const override { return "dpx"; }
+    virtual bool valid_file (const std::string &filename) const override;
+    virtual bool open (const std::string &name, ImageSpec &newspec) override;
+    virtual bool close () override;
+    virtual int current_subimage (void) const override { return m_subimage; }
+    virtual bool seek_subimage (int subimage, int miplevel, ImageSpec &newspec) override;
+    virtual bool read_native_scanline (int y, int z, void *data) override;
 
 private:
     int m_subimage;
@@ -478,13 +478,13 @@ DPXInput::seek_subimage (int subimage, int miplevel, ImageSpec &newspec)
 
         int kc[7];
         get_keycode_values (kc);
-        m_spec.attribute("smpte:KeyCode", TypeDesc::TypeKeyCode, kc);
+        m_spec.attribute("smpte:KeyCode", TypeKeyCode, kc);
     }
 
     if (m_dpx.header.timeCode != 0xFFFFFFFF) {
 
         unsigned int timecode[2] = {m_dpx.header.timeCode, m_dpx.header.userBits};
-        m_spec.attribute("smpte:TimeCode", TypeDesc::TypeTimeCode, timecode);
+        m_spec.attribute("smpte:TimeCode", TypeTimeCode, timecode);
 
         // This attribute is dpx specific and is left in for backwards compatability.
         // Users should utilise the new smpte:TimeCode attribute instead

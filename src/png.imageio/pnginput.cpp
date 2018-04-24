@@ -36,21 +36,26 @@
 
 #include "png_pvt.h"
 
+#define PNGSIGSIZE 8
+
 OIIO_PLUGIN_NAMESPACE_BEGIN
 
 
-class PNGInput : public ImageInput {
+class PNGInput final : public ImageInput {
 public:
     PNGInput () { init(); }
     virtual ~PNGInput () { close(); }
-    virtual const char * format_name (void) const { return "png"; }
-    virtual bool valid_file (const std::string &filename) const;
-    virtual bool open (const std::string &name, ImageSpec &newspec);
+    virtual const char * format_name (void) const override { return "png"; }
+    virtual bool valid_file (const std::string &filename) const override;
+    virtual bool open (const std::string &name, ImageSpec &newspec) override;
     virtual bool open (const std::string &name, ImageSpec &newspec,
-                       const ImageSpec &config);
-    virtual bool close ();
-    virtual int current_subimage (void) const { return m_subimage; }
-    virtual bool read_native_scanline (int y, int z, void *data);
+                       const ImageSpec &config) override;
+    virtual bool open (char *buffer, size_t size, ImageSpec &newspec) override;
+    virtual bool open (char *buffer, size_t size, ImageSpec &newspec,
+                       const ImageSpec &config) override;
+    virtual bool close () override;
+    virtual int current_subimage (void) const override { return m_subimage; }
+    virtual bool read_native_scanline (int y, int z, void *data) override;
 
 private:
     std::string m_filename;           ///< Stash the filename
@@ -66,6 +71,9 @@ private:
     int m_next_scanline;
     bool m_keep_unassociated_alpha;   ///< Do not convert unassociated alpha
 
+    // For in-memory blobs \/
+    OIIO::no_copy_membuf m_stream;
+
     /// Reset everything to initial state
     ///
     void init () {
@@ -74,6 +82,7 @@ private:
         m_png = NULL;
         m_info = NULL;
         m_buf.clear ();
+        m_stream.clear ();
         m_next_scanline = 0;
         m_keep_unassociated_alpha = false;
     }
@@ -178,6 +187,62 @@ PNGInput::open (const std::string &name, ImageSpec &newspec,
     return open (name, newspec);
 }
 
+
+
+bool
+PNGInput::open (char *buffer, size_t size, ImageSpec &newspec)
+{
+    png_byte pngsig[8];
+    int is_png = 0;
+
+    if (! buffer) {
+        error ("Bad PNG buffer.");
+        return false;
+    }
+
+    // Read 8 bytes from our new stream.
+    m_stream = OIIO::no_copy_membuf(buffer, size);
+    m_stream.read((char *)pngsig, PNGSIGSIZE);
+
+    is_png = png_sig_cmp(pngsig, 0, PNGSIGSIZE);
+    if (is_png != 0) {
+        error ("Bad PNG buffer signature.");
+        return false;
+    }
+
+    std::string s = PNG_pvt::create_read_struct (m_png, m_info);
+    if (s.length ()) {
+        close ();
+        error ("%s", s.c_str ());
+        return false;
+    }
+
+    // We set the custom read function up so that OIIO can use
+    // our memory buffer to read.
+    png_set_read_fn (m_png, (png_voidp)&m_stream, PNG_pvt::read_buffer_data);
+    png_set_sig_bytes (m_png, PNGSIGSIZE);  // already read 8 bytes
+
+    PNG_pvt::read_info (m_png, m_info, m_bit_depth, m_color_type,
+                        m_interlace_type, m_bg, m_spec,
+                        m_keep_unassociated_alpha);
+
+    newspec = spec ();
+    m_next_scanline = 0;
+
+    return true;
+}
+
+
+
+bool
+PNGInput::open (char *buffer, size_t size, ImageSpec &newspec,
+                const ImageSpec &config)
+{
+    // Check 'config' for any special requests
+    if (config.get_int_attribute("oiio:UnassociatedAlpha", 0) == 1)
+        m_keep_unassociated_alpha = true;
+    return open (buffer, size, newspec);
+}
 
 
 bool

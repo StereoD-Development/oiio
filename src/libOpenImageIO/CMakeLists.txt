@@ -28,23 +28,31 @@ if (NOT MSVC)
                              PROPERTIES COMPILE_FLAGS "-Wno-deprecated-declarations")
 endif()
 
-list (APPEND libOpenImageIO_srcs
-                          deepdata.cpp exif.cpp formatspec.cpp imagebuf.cpp
-                          imageinput.cpp imageio.cpp imageioplugin.cpp
-                          imageoutput.cpp iptc.cpp xmp.cpp
-                          color_ocio.cpp
+set (libOpenImageIO_srcs
                           imagebufalgo.cpp
+                          imagebufalgo_pixelmath.cpp
+                          imagebufalgo_channels.cpp
                           imagebufalgo_compare.cpp
                           imagebufalgo_copy.cpp
                           imagebufalgo_deep.cpp
                           imagebufalgo_draw.cpp
-                          imagebufalgo_pixelmath.cpp
+                          imagebufalgo_addsub.cpp
+                          imagebufalgo_muldiv.cpp
+                          imagebufalgo_mad.cpp
+                          imagebufalgo_orient.cpp
                           imagebufalgo_xform.cpp
                           imagebufalgo_yee.cpp imagebufalgo_opencv.cpp
+                          deepdata.cpp exif.cpp exif-canon.cpp
+                          formatspec.cpp imagebuf.cpp
+                          imageinput.cpp imageio.cpp imageioplugin.cpp
+                          imageoutput.cpp iptc.cpp xmp.cpp
+                          color_ocio.cpp
                           maketexture.cpp
                           ../libutil/argparse.cpp
+                          ../libutil/benchmark.cpp
                           ../libutil/errorhandler.cpp 
                           ../libutil/filesystem.cpp 
+                          ../libutil/stream.cpp 
                           ../libutil/farmhash.cpp 
                           ../libutil/filter.cpp 
                           ../libutil/hashes.cpp 
@@ -63,6 +71,7 @@ list (APPEND libOpenImageIO_srcs
                           ../libtexture/environment.cpp 
                           ../libtexture/texoptions.cpp 
                           ../libtexture/imagecache.cpp
+                          ${libOpenImageIO_srcs}
                           ${libOpenImageIO_hdrs}
                          )
 
@@ -107,8 +116,10 @@ endif ()
 target_link_libraries (OpenImageIO
                        ${SANITIZE_LIBRARIES}
                        ${format_plugin_libs} # Add all the target link libraries from the plugins
-                       ${Boost_LIBRARIES})
+                       ${Boost_LIBRARIES}
+                       ${CMAKE_DL_LIBS})
 
+include_directories (${ROBINMAP_INCLUDE_DIR})
 
 # Include OpenColorIO if using it
 if (USE_OCIO AND OCIO_FOUND)
@@ -122,12 +133,6 @@ endif ()
 if (OpenCV_FOUND)
     include_directories (${OpenCV_INCLUDE_DIR})
     target_link_libraries (OpenImageIO ${OpenCV_LIBS})
-endif ()
-
-# Include OpenSSL if using it
-if (OPENSSL_FOUND)
-    include_directories (${OPENSSL_INCLUDE_DIR})
-    target_link_libraries (OpenImageIO ${OPENSSL_LIBRARIES})
 endif ()
 
 # Include Freetype if using it
@@ -145,12 +150,25 @@ if (GDCM_FOUND)
 endif ()
 
 
+if (MSVC)
+    # In some MSVC setups, the IBA functions with huge template expansions
+    # can run into trouble if the /bigobj flag is not used. Turn it on for
+    # these files most likely to use it.
+    # FIXME: Does anybody know if there is an advantage to limiting it to
+    # just the files that most need it? Or is it better to make it totally
+    # foolproof by using /bigobj for all our modules on Windows?
+    file (GLOB iba_sources "imagebufalgo_*.cpp")
+    set_property (SOURCE imagebuf.cpp ${iba_sources}
+                  APPEND_STRING PROPERTY COMPILE_FLAGS " /bigobj ")
+endif ()
 
 if (WIN32)
     target_link_libraries (OpenImageIO psapi.lib)
 endif ()
 
-add_dependencies (OpenImageIO "${VISIBILITY_MAP_FILE}")
+if (VISIBILITY_MAP_FILE)
+    add_dependencies (OpenImageIO "${VISIBILITY_MAP_FILE}")
+endif ()
 
 if (USE_EXTERNAL_PUGIXML)
     target_link_libraries (OpenImageIO ${PUGIXML_LIBRARIES})
@@ -199,33 +217,32 @@ if (OIIO_BUILD_TESTS)
 
     add_executable (imagebuf_test imagebuf_test.cpp)
     set_target_properties (imagebuf_test PROPERTIES FOLDER "Unit Tests")
-    target_link_libraries (imagebuf_test OpenImageIO ${Boost_LIBRARIES} ${CMAKE_DL_LIBS})
+    target_link_libraries (imagebuf_test OpenImageIO ${Boost_LIBRARIES})
     add_test (unit_imagebuf imagebuf_test)
 
     add_executable (imagecache_test imagecache_test.cpp)
     set_target_properties (imagecache_test PROPERTIES FOLDER "Unit Tests")
-    target_link_libraries (imagecache_test OpenImageIO ${Boost_LIBRARIES} ${CMAKE_DL_LIBS})
+    target_link_libraries (imagecache_test OpenImageIO ${Boost_LIBRARIES})
     add_test (unit_imagecache imagecache_test)
 
     add_executable (imagebufalgo_test imagebufalgo_test.cpp)
     set_target_properties (imagebufalgo_test PROPERTIES FOLDER "Unit Tests")
-    target_link_libraries (imagebufalgo_test OpenImageIO ${Boost_LIBRARIES} ${CMAKE_DL_LIBS})
+    target_link_libraries (imagebufalgo_test OpenImageIO ${Boost_LIBRARIES})
     add_test (unit_imagebufalgo imagebufalgo_test)
 
     add_executable (imagespec_test imagespec_test.cpp)
     set_target_properties (imagespec_test PROPERTIES FOLDER "Unit Tests")
-    target_link_libraries (imagespec_test OpenImageIO ${Boost_LIBRARIES} ${CMAKE_DL_LIBS})
+    target_link_libraries (imagespec_test OpenImageIO ${Boost_LIBRARIES})
     add_test (unit_imagespec imagespec_test)
     
     add_executable (imagespeed_test imagespeed_test.cpp)
     set_target_properties (imagespeed_test PROPERTIES FOLDER "Unit Tests")
-    target_link_libraries (imagespeed_test OpenImageIO ${Boost_LIBRARIES} ${CMAKE_DL_LIBS})
+    target_link_libraries (imagespeed_test OpenImageIO ${Boost_LIBRARIES})
     #add_test (imagespeed_test imagespeed_test)
 
     add_executable (compute_test compute_test.cpp)
     set_target_properties (compute_test PROPERTIES FOLDER "Unit Tests")
-    target_link_libraries (compute_test OpenImageIO ${Boost_LIBRARIES}
-                           ${CMAKE_DL_LIBS})
+    target_link_libraries (compute_test OpenImageIO ${Boost_LIBRARIES})
     add_test (unit_compute compute_test)
 
 endif (OIIO_BUILD_TESTS)

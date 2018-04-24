@@ -55,6 +55,7 @@
 #include <OpenImageIO/imagebufalgo_util.h>
 #include <OpenImageIO/thread.h>
 #include <OpenImageIO/filter.h>
+#include "imageio_pvt.h"
 
 #ifdef USE_BOOST_REGEX
 # include <boost/regex.hpp>
@@ -246,7 +247,7 @@ resize_block_ (ImageBuf &dst, const ImageBuf &src, ROI roi, bool envlatlmode)
     float xscale = 1.0f / (float)dstspec.full_width;
     float yscale = 1.0f / (float)dstspec.full_height;
     int nchannels = dst.nchannels();
-    ASSERT (dst.spec().format == TypeDesc::TypeFloat);
+    ASSERT (dst.spec().format == TypeFloat);
     ImageBuf::Iterator<float> d (dst, roi);
     for (int y = y0;  y < y1;  ++y) {
         float t = (y+0.5f)*yscale + yoffset;
@@ -348,7 +349,7 @@ resize_block (ImageBuf &dst, const ImageBuf &src, ROI roi, bool envlatlmode,
         OIIO_DISPATCH_TYPES (ok, "resize_block_2pass", resize_block_2pass,
                              srcspec.format, dst, src, roi, allow_shift);
     } else {
-        ASSERT (dst.spec().format == TypeDesc::TypeFloat);
+        ASSERT (dst.spec().format == TypeFloat);
         OIIO_DISPATCH_TYPES (ok, "resize_block", resize_block_, srcspec.format,
                              dst, src, roi, envlatlmode);
     }
@@ -425,6 +426,91 @@ lightprobe_to_envlatl (ImageBuf &dst, const ImageBuf &src, bool y_is_up,
         }
     });
 
+    return true;
+}
+
+
+
+// compute slopes in pixel space using a Sobel gradient filter
+template<class SRCTYPE>
+static void
+sobel_gradient (const ImageBuf &src, const ImageBuf::Iterator<float> &dstpix,
+                float *h, float* dh_ds, float *dh_dt)
+{
+    static const float sobelweight_ds[9] = { -1.0f, 0.0f, 1.0f,
+                                             -2.0f, 0.0f, 2.0f,
+                                             -1.0f, 0.0f, 1.0f };
+    static const float sobelweight_dt[9] = { -1.0f, -2.0f, -1.0f,
+                                              0.0f,  0.0f,  0.0f,
+                                              1.0f,  2.0f,  1.0f };
+
+    *dh_ds = *dh_dt = 0.0f;
+
+    ImageBuf::ConstIterator<SRCTYPE> srcpix (src, dstpix.x()-1, dstpix.x()+2, dstpix.y()-1, dstpix.y()+2, 0, 1,  ImageBuf::WrapClamp);
+    for (int i = 0; !srcpix.done(); ++srcpix, ++i) {
+        // accumulate to dh_ds and dh_dt using corresponding sobel 3x3 weights
+        float srcval = srcpix[0];
+        *dh_ds += sobelweight_ds[i] * srcval;
+        *dh_dt += sobelweight_dt[i] * srcval;
+        if (i==4)
+            *h = srcval;
+    }
+
+    *dh_ds = *dh_ds  / 8.0f ; // sobel normalization
+    *dh_dt = *dh_dt  / 8.0f ;
+}
+
+
+
+// compute slopes from normal in s,t space
+// Note: because we use getpixel(), it works for all src pixel types.
+static void
+normal_gradient (const ImageBuf &src, const ImageBuf::Iterator<float> &dstpix,
+                 float *h, float* dh_ds, float *dh_dt)
+{
+    // assume a normal defined in the tangent space
+    float n[3];
+    src.getpixel(dstpix.x(), dstpix.y(), n, 3);
+    *h = -1.0f;
+    *dh_ds = - n[0] / n[2];
+    *dh_dt = - n[1] / n[2];
+}
+
+
+
+template<class SRCTYPE>
+static bool
+bump_to_bumpslopes (ImageBuf &dst, const ImageBuf &src, ROI roi=ROI::All(),
+                    int nthreads=0)
+{
+    ASSERT (dst.initialized() && dst.nchannels() == 6);
+    ASSERT (dst.spec().format == TypeDesc::FLOAT);
+
+    // detect bump input format according to channel count
+    void (*bump_filter)(const ImageBuf&, const ImageBuf::Iterator<float>&, float*, float*, float*);
+    if (src.spec().nchannels == 3) // assume it is a normal map
+        bump_filter = &normal_gradient;
+    else
+        bump_filter = &sobel_gradient<SRCTYPE>; // default one considering height value in channel 0 
+
+    ImageBufAlgo::parallel_image (roi, nthreads, [&](ROI roi){
+        // iterate on destination image
+        for (ImageBuf::Iterator<float> d(dst, roi);  ! d.done();  ++d) {
+            float h;
+            float dhds;
+            float dhdt;
+            bump_filter(src, d, &h, &dhds, &dhdt);
+            // h = height or h = -1.0f if a normal map
+            d[0] = h;
+            // first moments
+            d[1] = dhds;
+            d[2] = dhdt;
+            // second moments
+            d[3] = dhds * dhds;
+            d[4] = dhdt * dhdt;
+            d[5] = dhds * dhdt;
+        }
+    });
     return true;
 }
 
@@ -862,9 +948,9 @@ make_texture_impl (ImageBufAlgo::MakeTextureMode mode,
     }
 
     bool shadowmode = (mode == ImageBufAlgo::MakeTxShadow);
-    bool envlatlmode = (mode == ImageBufAlgo::MakeTxEnvLatl || 
+    bool envlatlmode = (mode == ImageBufAlgo::MakeTxEnvLatl ||
                         mode == ImageBufAlgo::MakeTxEnvLatlFromLightProbe);
-
+    
     // Find an ImageIO plugin that can open the output file, and open it
     std::string outformat = configspec.get_string_attribute ("maketx:fileformatname",
                                                              outputfilename);
@@ -932,14 +1018,41 @@ make_texture_impl (ImageBufAlgo::MakeTextureMode mode,
         src = latlong;
     }
 
+    if (mode == ImageBufAlgo::MakeTxBumpWithSlopes) {
+        ImageSpec newspec = src->spec();
+        newspec.tile_width = newspec.tile_height = 0;
+        newspec.set_format (TypeDesc::FLOAT);
+        newspec.nchannels = 6;
+        newspec.channelnames.resize(0);
+        newspec.channelnames.push_back("b0_h") ;
+        newspec.channelnames.push_back("b1_dhds") ;
+        newspec.channelnames.push_back("b2_dhdt") ;
+        newspec.channelnames.push_back("b3_dhds2");
+        newspec.channelnames.push_back("b4_dhdt2");
+        newspec.channelnames.push_back("b5_dh2dsdt");
+        std::shared_ptr<ImageBuf> bumpslopes (new ImageBuf(newspec));
+        bool ok;
+        OIIO_DISPATCH_COMMON_TYPES (ok, "bump_to_bumpslopes",
+                                    bump_to_bumpslopes, src->spec().format,
+                                    *bumpslopes, *src);
+        // bump_to_bumpslopes(*bumpslopes, *src);
+        mode = ImageBufAlgo::MakeTxTexture;
+        src = bumpslopes;
+    }
+    double misc_time_2 = alltime.lap();
+    STATUS ("misc2", misc_time_2);
+
     // Some things require knowing a bunch about the pixel statistics.
     bool constant_color_detect = configspec.get_int_attribute("maketx:constant_color_detect");
     bool opaque_detect = configspec.get_int_attribute("maketx:opaque_detect");
     bool compute_average_color = configspec.get_int_attribute("maketx:compute_average", 1);
     ImageBufAlgo::PixelStats pixel_stats;
     bool compute_stats = (constant_color_detect || opaque_detect || compute_average_color);
-    if (compute_stats)
+    if (compute_stats) {
         ImageBufAlgo::computePixelStats (pixel_stats, *src);
+    }
+    double stat_pixelstatstime = alltime.lap();
+    STATUS ("pixelstats", stat_pixelstatstime);
 
     // If requested - and we're a constant color - make a tiny texture instead
     // Only safe if the full/display window is the same as the data window.
@@ -1152,7 +1265,8 @@ make_texture_impl (ImageBufAlgo::MakeTextureMode mode,
         configspec.attribute ("wrapmodes", "periodic,clamp");
         if (prman_metadata)
             dstspec.attribute ("PixarTextureFormat", "LatLong Environment");
-    } else {
+    } 
+    else {
         dstspec.attribute ("textureformat", "Plain Texture");
         if (prman_metadata)
             dstspec.attribute ("PixarTextureFormat", "Plain Texture");
@@ -1207,8 +1321,8 @@ make_texture_impl (ImageBufAlgo::MakeTextureMode mode,
         }
     }
 
-    double misc_time_2 = alltime.lap();
-    STATUS ("misc2", misc_time_2);
+    double misc_time_3 = alltime.lap();
+    STATUS ("misc2b", misc_time_3);
 
     // Color convert the pixels, if needed, in place.  If a color
     // conversion is required we will promote the src to floating point
@@ -1241,8 +1355,8 @@ make_texture_impl (ImageBufAlgo::MakeTextureMode mode,
             return false;
         }
         
-        ColorProcessor * processor = colorconfig.createColorProcessor (
-            incolorspace.c_str(), outcolorspace.c_str());
+        ColorProcessorHandle processor =
+            colorconfig.createColorProcessor (incolorspace, outcolorspace);
         if (!processor || colorconfig.error()) {
             outstream << "Error Creating Color Processor." << std::endl;
             outstream << colorconfig.geterror() << std::endl;
@@ -1253,14 +1367,14 @@ make_texture_impl (ImageBufAlgo::MakeTextureMode mode,
         if (unpremult && verbose)
             outstream << "  Unpremulting image..." << std::endl;
         
-        if (!ImageBufAlgo::colorconvert (*ccSrc, *src, processor, unpremult)) {
+        if (!ImageBufAlgo::colorconvert (*ccSrc, *src, processor.get(), unpremult)) {
             outstream << "Error applying color conversion to image.\n";
             return false;
         }
         
         if (isConstantColor) {
             if (!ImageBufAlgo::colorconvert (&constantColor[0],
-                static_cast<int>(constantColor.size()), processor, unpremult)) {
+                static_cast<int>(constantColor.size()), processor.get(), unpremult)) {
                 outstream << "Error applying color conversion to constant color.\n";
                 return false;
             }
@@ -1268,14 +1382,11 @@ make_texture_impl (ImageBufAlgo::MakeTextureMode mode,
 
         if (compute_average_color) {
             if (!ImageBufAlgo::colorconvert (&pixel_stats.avg[0],
-                static_cast<int>(pixel_stats.avg.size()), processor, unpremult)) {
+                static_cast<int>(pixel_stats.avg.size()), processor.get(), unpremult)) {
                 outstream << "Error applying color conversion to average color.\n";
                 return false;
             }
         }
-
-        ColorConfig::deleteColorProcessor(processor);
-        processor = NULL;
 
         // swap the color-converted buffer and src (making src be the
         // working master that's color converted).
@@ -1322,8 +1433,8 @@ make_texture_impl (ImageBufAlgo::MakeTextureMode mode,
     }
     std::string filtername = configspec.get_string_attribute ("maketx:filtername", "box");
 
-    double misc_time_3 = alltime.lap(); 
-    STATUS ("misc3", misc_time_3);
+    double misc_time_4 = alltime.lap(); 
+    STATUS ("misc3", misc_time_4);
 
     std::shared_ptr<ImageBuf> toplevel;  // Ptr to top level of mipmap
     if (! do_resize && dstspec.format == src->spec().format) {
@@ -1389,6 +1500,7 @@ make_texture_impl (ImageBufAlgo::MakeTextureMode mode,
     // (such as filtering information) needs to be manually added into the
     // hash.
     std::ostringstream addlHashData;
+    addlHashData.imbue (std::locale::classic()); // Force "C" locale with '.' decimal
     addlHashData << filtername << " ";
     float sharpen = configspec.get_float_attribute ("maketx:sharpen", 0.0f);
     if (sharpen != 0.0f) {
@@ -1420,6 +1532,7 @@ make_texture_impl (ImageBufAlgo::MakeTextureMode mode,
   
     if (isConstantColor) {
         std::ostringstream os; // Emulate a JSON array
+        os.imbue (std::locale::classic());  // Force "C" locale with '.' decimal
         for (int i = 0; i < dstspec.nchannels; ++i) {
             if (i!=0) os << ",";
             os << (i<(int)constantColor.size() ? constantColor[i] : 0.0f);
@@ -1439,6 +1552,7 @@ make_texture_impl (ImageBufAlgo::MakeTextureMode mode,
     
     if (compute_average_color) {
         std::ostringstream os; // Emulate a JSON array
+        os.imbue (std::locale::classic());  // Force "C" locale with '.' decimal
         for (int i = 0; i < dstspec.nchannels; ++i) {
             if (i!=0) os << ",";
             os << (i<(int)pixel_stats.avg.size() ? pixel_stats.avg[i] : 0.0f);
@@ -1469,8 +1583,8 @@ make_texture_impl (ImageBufAlgo::MakeTextureMode mode,
 
     maketx_merge_spec (dstspec, configspec);
 
-    double misc_time_4 = alltime.lap();
-    STATUS ("misc4", misc_time_4);
+    double misc_time_5 = alltime.lap();
+    STATUS ("misc4", misc_time_5);
 
     // Write out, and compute, the mipmap levels for the speicifed image
     bool nomipmap = configspec.get_int_attribute ("maketx:nomipmap") != 0;
@@ -1505,11 +1619,12 @@ make_texture_impl (ImageBufAlgo::MakeTextureMode mode,
         outstream << Strutil::format ("  file write:      %5.2f\n", stat_writetime);
         outstream << Strutil::format ("  initial resize:  %5.2f\n", stat_resizetime);
         outstream << Strutil::format ("  hash:            %5.2f\n", stat_hashtime);
+        outstream << Strutil::format ("  pixelstats:      %5.2f\n", stat_pixelstatstime);
         outstream << Strutil::format ("  mip computation: %5.2f\n", stat_miptime);
         outstream << Strutil::format ("  color convert:   %5.2f\n", stat_colorconverttime);
-        outstream << Strutil::format ("  unaccounted:     %5.2f  (%5.2f %5.2f %5.2f %5.2f)\n",
+        outstream << Strutil::format ("  unaccounted:     %5.2f  (%5.2f %5.2f %5.2f %5.2f %5.2f)\n",
                                       all-stat_readtime-stat_writetime-stat_resizetime-stat_hashtime-stat_miptime,
-                                      misc_time_1, misc_time_2, misc_time_3, misc_time_4);
+                                      misc_time_1, misc_time_2, misc_time_3, misc_time_4, misc_time_5);
         outstream << Strutil::format ("maketx peak memory used: %s\n",
                                       Strutil::memformat(peak_mem));
     }
@@ -1527,6 +1642,7 @@ ImageBufAlgo::make_texture (ImageBufAlgo::MakeTextureMode mode,
                             const ImageSpec &configspec,
                             std::ostream *outstream)
 {
+    pvt::LoggedTimer logtime("IBA::make_texture");
     return make_texture_impl (mode, NULL, filename, outputfilename,
                               configspec, outstream);
 }
@@ -1540,6 +1656,7 @@ ImageBufAlgo::make_texture (ImageBufAlgo::MakeTextureMode mode,
                             const ImageSpec &configspec,
                             std::ostream *outstream_ptr)
 {
+    pvt::LoggedTimer logtime("IBA::make_texture");
     return make_texture_impl (mode, NULL, filenames[0], outputfilename,
                               configspec, outstream_ptr);
 }
@@ -1553,6 +1670,7 @@ ImageBufAlgo::make_texture (ImageBufAlgo::MakeTextureMode mode,
                             const ImageSpec &configspec,
                             std::ostream *outstream)
 {
+    pvt::LoggedTimer logtime("IBA::make_texture");
     return make_texture_impl (mode, &input, "", outputfilename,
                               configspec, outstream);
 }

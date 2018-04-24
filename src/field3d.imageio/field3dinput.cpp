@@ -54,26 +54,26 @@ f3dpvt::field3d_mutex ()
 
 
 
-class Field3DInput : public Field3DInput_Interface {
+class Field3DInput final : public Field3DInput_Interface {
 public:
     Field3DInput () { init(); }
     virtual ~Field3DInput () { close(); }
-    virtual const char * format_name (void) const { return "field3d"; }
-    virtual int supports (string_view feature) const {
+    virtual const char * format_name (void) const override { return "field3d"; }
+    virtual int supports (string_view feature) const override {
         return (feature == "arbitrary_metadata");
     }
-    virtual bool valid_file (const std::string &filename) const;
-    virtual bool open (const std::string &name, ImageSpec &newspec);
-    virtual bool close ();
-    virtual int current_subimage (void) const { return m_subimage; }
-    virtual bool seek_subimage (int subimage, int miplevel, ImageSpec &newspec);
-    virtual bool read_native_scanline (int y, int z, void *data);
-    virtual bool read_native_tile (int x, int y, int z, void *data);
+    virtual bool valid_file (const std::string &filename) const override;
+    virtual bool open (const std::string &name, ImageSpec &newspec) override;
+    virtual bool close () override;
+    virtual int current_subimage (void) const override { return m_subimage; }
+    virtual bool seek_subimage (int subimage, int miplevel, ImageSpec &newspec) override;
+    virtual bool read_native_scanline (int y, int z, void *data) override;
+    virtual bool read_native_tile (int x, int y, int z, void *data) override;
 
     /// Transform a world space position to local coordinates, using the
     /// mapping of the current subimage.
     virtual void worldToLocal (const Imath::V3f &wsP, Imath::V3f &lsP,
-                               float time) const;
+                               float time) const override;
 
 private:
     std::string m_name;
@@ -176,7 +176,7 @@ read_metadata (const M &meta, ImageSpec &spec)
     }
     for (typename M::VecFloatMetadata::const_iterator i = meta.vecFloatMetadata().begin(),
              e = meta.vecFloatMetadata().end(); i != e;  ++i) {
-        spec.attribute (i->first, TypeDesc::TypeVector, &(i->second));
+        spec.attribute (i->first, TypeVector, &(i->second));
     }
 }
 
@@ -277,7 +277,7 @@ Field3DInput::read_one_layer (FieldRes::Ptr field, layerrecord &lay,
                        (float)md[2][0], (float)md[2][1], (float)md[2][2], (float)md[2][3],
                        (float)md[3][0], (float)md[3][1], (float)md[3][2], (float)md[3][3]);
         m = m.inverse();
-        lay.spec.attribute ("worldtocamera", TypeDesc::TypeMatrix, &m);
+        lay.spec.attribute ("worldtocamera", TypeMatrix, &m);
     }
 
     // Other metadata
@@ -342,6 +342,12 @@ Field3DInput::valid_file (const std::string &filename) const
     if (! Filesystem::is_regular (filename))
         return false;
 
+    // The f3d is flaky when opening some non-f3d files. It should just fail
+    // gracefully, but it doesn't always. So to keep my sanity, don't even
+    // bother trying for filenames that don't end in .f3d.
+    if (! Strutil::iends_with (filename, ".f3d"))
+        return false;
+
     oiio_field3d_initialize ();
 
     bool ok = false;
@@ -369,6 +375,12 @@ Field3DInput::open (const std::string &name, ImageSpec &newspec)
         close();
 
     if (! Filesystem::is_regular (name))
+        return false;
+
+    // The f3d is flaky when opening some non-f3d files. It should just fail
+    // gracefully, but it doesn't always. So to keep my sanity, don't even
+    // bother trying for filenames that don't end in .f3d.
+    if (! Strutil::iends_with (name, ".f3d"))
         return false;
 
     oiio_field3d_initialize ();

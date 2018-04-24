@@ -40,8 +40,10 @@
 #include <OpenImageIO/imageio.h>
 #include <OpenImageIO/strutil.h>
 #include <OpenImageIO/filesystem.h>
+#include <OpenImageIO/stream.h>
 #include <OpenImageIO/fmath.h>
 #include <OpenImageIO/sysutil.h>
+#include <OpenImageIO/tiffutils.h>
 
 
 #define OIIO_LIBPNG_VERSION (PNG_LIBPNG_VER_MAJOR*10000 + PNG_LIBPNG_VER_MINOR*100 + PNG_LIBPNG_VER_RELEASE)
@@ -293,6 +295,18 @@ read_into_buffer (png_structp& sp, png_infop& ip, ImageSpec& spec,
 
     // success
     return "";
+}
+
+
+
+/// PNG way of reading data from alternate sources. In our case, we use blobbed
+/// memory so that we can host compressed files. (i.e. pulled from a server) and
+/// uncompress them on demand.
+inline void
+read_buffer_data(png_structp sp, png_bytep data, size_t length)
+{
+    png_voidp iop = png_get_io_ptr(sp);
+    ((OIIO::no_copy_membuf*)iop)->read((char*)data, length);
 }
 
 
@@ -604,32 +618,20 @@ write_row (png_structp& sp, png_byte *data)
 
 
 
-/// Helper function - finalizes writing the image.
-///
+/// Helper function - finalizes writing the image and destroy the write
+/// struct.
 inline void
-finish_image (png_structp& sp)
+finish_image (png_structp& sp, png_infop& ip)
 {
     // Must call this setjmp in every function that does PNG writes
     if (setjmp (png_jmpbuf(sp))) {
         //error ("PNG library error");
         return;
     }
-    png_write_end (sp, NULL);
-}
-
-
-
-/// Destroys a PNG write struct.
-///
-inline void
-destroy_write_struct (png_structp& sp, png_infop& ip)
-{
-    if (sp && ip) {
-        finish_image (sp);
-        png_destroy_write_struct (&sp, &ip);
-        sp = NULL;
-        ip = NULL;
-    }
+    png_write_end (sp, ip);
+    png_destroy_write_struct (&sp, &ip);
+    sp = nullptr;
+    ip = nullptr;
 }
 
 

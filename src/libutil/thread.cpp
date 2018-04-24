@@ -51,10 +51,12 @@
 
 #include <OpenImageIO/sysutil.h>
 #include <OpenImageIO/thread.h>
+#include <OpenImageIO/parallel.h>
 #include <OpenImageIO/sysutil.h>
 #include <OpenImageIO/strutil.h>
 
 #include <boost/thread/tss.hpp>
+#include <boost/container/flat_map.hpp>
 
 #if 0
 
@@ -90,6 +92,10 @@ public:
         std::unique_lock<Mutex> lock(this->mutex);
         return this->q.empty();
     }
+    size_t size() {
+        std::unique_lock<Mutex> lock(this->mutex);
+        return q.size();
+    }
 private:
     typedef OIIO::spin_mutex Mutex;
     std::queue<T> q;
@@ -124,7 +130,10 @@ public:
     }
 
     // get the number of running threads in the pool
-    int size() const { return static_cast<int>(this->threads.size()); }
+    int size() const {
+        DASSERT (m_size == static_cast<int>(this->threads.size()));
+        return m_size;
+    }
 
     // number of idle threads
     int n_idle() const { return this->nWaiting; }
@@ -138,7 +147,7 @@ public:
         if (nThreads < 0)
             nThreads = std::max (1, int(threads_default()) - 1);
         if (!this->isStop && !this->isDone) {
-            int oldNThreads = static_cast<int>(this->threads.size());
+            int oldNThreads = size();
             if (oldNThreads <= nThreads) {  // if the number of threads is increased
                 this->threads.resize(nThreads);
                 this->flags.resize(nThreads);
@@ -161,6 +170,7 @@ public:
                 this->flags.resize(nThreads);  // safe to delete because the threads have copies of shared_ptr of the flags, not originals
             }
         }
+        m_size = nThreads;
     }
 
     // empty the queue
@@ -204,51 +214,15 @@ public:
             std::unique_lock<std::mutex> lock(this->mutex);
             this->cv.notify_all();  // stop all waiting threads
         }
-        for (int i = 0; i < static_cast<int>(this->threads.size()); ++i) {  // wait for the computing threads to finish
-            if (this->threads[i]->joinable())
-                this->threads[i]->join();
+        for (auto& thread : this->threads) {  // wait for the computing threads to finish
+            if (thread->joinable())
+                thread->join();
         }
         // if there were no threads in the pool but some functors in the queue, the functors are not deleted by the threads
         // therefore delete them here
         this->clear_queue();
         this->threads.clear();
         this->flags.clear();
-    }
-
-    template<typename F, typename... Rest>
-    auto push(F && f, Rest&&... rest) ->std::future<decltype(f(0, rest...))> {
-        auto pck = std::make_shared<std::packaged_task<decltype(f(0, rest...))(int)>>(
-            std::bind(std::forward<F>(f), std::placeholders::_1, std::forward<Rest>(rest)...)
-        );
-        if (size() < 1) {
-            (*pck)(-1); // No worker threads, run it with the calling thread
-        } else {
-            auto _f = new std::function<void(int id)>([pck](int id) {
-                (*pck)(id);
-            });
-            this->q.push(_f);
-            std::unique_lock<std::mutex> lock(this->mutex);
-            this->cv.notify_one();
-        }
-        return pck->get_future();
-    }
-
-    // run the user's function that excepts argument int - id of the running thread. returned value is templatized
-    // operator returns std::future, where the user can get the result and rethrow the catched exceptins
-    template<typename F>
-    auto push(F && f) ->std::future<decltype(f(0))> {
-        auto pck = std::make_shared<std::packaged_task<decltype(f(0))(int)>>(std::forward<F>(f));
-        if (size() < 1) {
-            (*pck)(-1); // No worker threads, run it with the calling thread
-        } else {
-            auto _f = new std::function<void(int id)>([pck](int id) {
-                (*pck)(id);
-            });
-            this->q.push(_f);
-            std::unique_lock<std::mutex> lock(this->mutex);
-            this->cv.notify_one();
-        }
-        return pck->get_future();
     }
 
     void push_queue_and_notify (std::function<void(int id)> *f) {
@@ -259,12 +233,17 @@ public:
 
     // If any tasks are on the queue, pop and run one with the calling
     // thread.
-    bool run_one_task () {
-        std::function<void(int id)> * f;
+    bool run_one_task (std::thread::id id) {
+        std::function<void(int)> * f = nullptr;
         bool isPop = this->q.pop(f);
         if (isPop) {
+            DASSERT (f);
             std::unique_ptr<std::function<void(int id)>> func(f);  // at return, delete the function even if an exception occurred
+            register_worker (id);
             (*f)(-1);
+            deregister_worker (id);
+        } else {
+            DASSERT (f == nullptr);
         }
         return isPop;
     }
@@ -272,6 +251,27 @@ public:
     bool this_thread_is_in_pool () const {
         int *p = m_pool_members.get();
         return p && (*p);
+    }
+
+    void register_worker (std::thread::id id) {
+        spin_lock lock (m_worker_threadids_mutex);
+        m_worker_threadids[id] += 1;
+    }
+    void deregister_worker (std::thread::id id) {
+        spin_lock lock (m_worker_threadids_mutex);
+        m_worker_threadids[id] -= 1;
+    }
+    bool is_worker (std::thread::id id) {
+        spin_lock lock (m_worker_threadids_mutex);
+        return m_worker_threadids[id] != 0;
+    }
+
+    size_t jobs_in_queue () const {
+        return q.size();
+    }
+
+    bool very_busy () const {
+        return jobs_in_queue() > size_t(4*m_size);
     }
 
 private:
@@ -284,6 +284,7 @@ private:
         std::shared_ptr<std::atomic<bool>> flag(this->flags[i]);  // a copy of the shared ptr to the flag
         auto f = [this, i, flag/* a copy of the shared ptr to the flag */]() {
             this->m_pool_members.reset (new int (1)); // I'm in the pool
+            register_worker (std::this_thread::get_id());
             std::atomic<bool> & _flag = *flag;
             std::function<void(int id)> * _f;
             bool isPop = this->q.pop(_f);
@@ -308,6 +309,7 @@ private:
                     break;  // if the queue is empty and this->isDone == true or *flag then return
             }
             this->m_pool_members.reset (); // I'm no longer in the pool
+            deregister_worker (std::this_thread::get_id());
         };
         this->threads[i].reset(new std::thread(f));  // compiler may not support std::make_unique()
     }
@@ -320,9 +322,12 @@ private:
     std::atomic<bool> isDone;
     std::atomic<bool> isStop;
     std::atomic<int> nWaiting;  // how many threads are waiting
+    int m_size {0};             // Number of threads in the queue
     std::mutex mutex;
     std::condition_variable cv;
     boost::thread_specific_ptr<int> m_pool_members; // Who's in the pool
+    boost::container::flat_map<std::thread::id,int> m_worker_threadids;
+    spin_mutex m_worker_threadids_mutex;
 };
 
 
@@ -368,10 +373,18 @@ thread_pool::idle () const
 
 
 
-bool
-thread_pool::run_one_task ()
+size_t
+thread_pool::jobs_in_queue () const
 {
-    return m_impl->run_one_task ();
+    return m_impl->jobs_in_queue();
+}
+
+
+
+bool
+thread_pool::run_one_task (std::thread::id id)
+{
+    return m_impl->run_one_task (id);
 }
 
 
@@ -391,11 +404,203 @@ thread_pool::this_thread_is_in_pool () const
 
 
 
+void
+thread_pool::register_worker (std::thread::id id)
+{
+    m_impl->register_worker (id);
+}
+
+void
+thread_pool::deregister_worker (std::thread::id id)
+{
+    m_impl->deregister_worker (id);
+}
+
+bool
+thread_pool::is_worker (std::thread::id id)
+{
+    return m_impl->is_worker (id);
+}
+
+
+bool
+thread_pool::very_busy () const
+{
+    return m_impl->very_busy();
+}
+
+
+
 thread_pool *
 default_thread_pool ()
 {
     static std::unique_ptr<thread_pool> shared_pool (new thread_pool);
     return shared_pool.get();
+}
+
+
+
+void
+task_set::wait_for_task (size_t taskindex, bool block)
+{
+    DASSERT (submitter() == std::this_thread::get_id());
+    if (taskindex >= m_futures.size())
+        return;  // nothing to wait for
+    auto &f (m_futures[taskindex]);
+    if (block || m_pool->is_worker (m_submitter_thread)) {
+        // Block on completion of all the task and don't try to do any
+        // of the work with the calling thread.
+        f.wait ();
+        return;
+    }
+    // If we made it here, we want to allow the calling thread to help
+    // do pool work if it's waiting around for a while.
+    const std::chrono::milliseconds wait_time (0);
+    int tries = 0;
+    while (1) {
+        // Asking future.wait_for for 0 time just checks the status.
+        if (f.wait_for (wait_time) == std::future_status::ready)
+            return;  // task has completed
+        // We're still waiting for the task to complete. What next?
+        if (++tries < 4) {   // First few times,
+            pause(4);        //   just busy-wait, check status again
+            continue;
+        }
+        // Since we're waiting, try to run a task ourselves to help
+        // with the load. If none is available, just yield schedule.
+        if (! m_pool->run_one_task(m_submitter_thread)) {
+            // We tried to do a task ourselves, but there weren't any
+            // left, so just wait for the rest to finish.
+            yield ();
+        }
+    }
+}
+
+
+
+void
+task_set::wait (bool block)
+{
+    DASSERT (submitter() == std::this_thread::get_id());
+    const std::chrono::milliseconds wait_time (0);
+    if (m_pool->is_worker (m_submitter_thread))
+        block = true;   // don't get into recursive work stealing
+    if (block == false) {
+        int tries = 0;
+        while (1) {
+            bool all_finished = true;
+            int nfutures = 0, finished = 0;
+            for (auto&& f : m_futures) {
+                // Asking future.wait_for for 0 time just checks the status.
+                ++nfutures;
+                auto status = f.wait_for (wait_time);
+                if (status != std::future_status::ready)
+                    all_finished = false;
+                else ++finished;
+            }
+            if (all_finished)   // All futures are ready? We're done.
+                break;
+            // We're still waiting on some tasks to complete. What next?
+            if (++tries < 4) {   // First few times,
+                pause(4);        //   just busy-wait, check status again
+                continue;
+            }
+            // Since we're waiting, try to run a task ourselves to help
+            // with the load. If none is available, just yield schedule.
+            if (! m_pool->run_one_task(m_submitter_thread)) {
+                // We tried to do a task ourselves, but there weren't any
+                // left, so just wait for the rest to finish.
+#if 1
+                yield ();
+#else
+                // FIXME -- as currently written, if we see an empty queue
+                // but we're still waiting for the tasks in our set to end,
+                // we will keep looping and potentially ourselves do work
+                // that was part of another task set. If there a benefit to,
+                // once we see an empty queue, only waiting for the existing
+                // tasks to finish and not altruistically executing any more
+                // tasks?  This is how we would take the exit now:
+                for (auto&& f : m_futures)
+                    f.wait ();
+                break;
+#endif
+            }
+        }
+    } else {
+        // If block is true, just block on completion of all the tasks
+        // and don't try to do any of the work with the calling thread.
+        for (auto&& f : m_futures)
+            f.wait ();
+    }
+#ifndef NDEBUG
+    check_done ();
+#endif
+}
+
+
+
+void
+parallel_for_chunked (int64_t start, int64_t end, int64_t chunksize,
+                      std::function<void(int id, int64_t b, int64_t e)>&& task,
+                      parallel_options opt)
+{
+    opt.resolve ();
+    chunksize = std::min (chunksize, end-start);
+    if (chunksize < 1) {   // If caller left chunk size to us...
+        if (opt.singlethread()) {  // Single thread: do it all in one shot
+            chunksize = end-start;
+        } else {   // Multithread: choose a good chunk size
+            int p = std::max (1, 2*opt.maxthreads);
+            chunksize = std::max (int64_t(opt.minitems), (end-start) / p);
+        }
+    }
+    // N.B. If chunksize was specified, honor it, even for the single
+    // threaded case.
+    for (task_set ts (opt.pool); start < end; start += chunksize) {
+        int64_t e = std::min (end, start+chunksize);
+        if (e == end || opt.singlethread() || opt.pool->very_busy()) {
+            // For the last (or only) subtask, or if we are using just one
+            // thread, or if the pool is already oversubscribed, do it
+            // ourselves and avoid messing with the queue or handing off
+            // between threads.
+            task (-1, start, e);
+        } else {
+            ts.push (opt.pool->push (task, start, e));
+        }
+    }
+}
+
+
+
+void
+parallel_for_chunked_2D (int64_t xstart, int64_t xend, int64_t xchunksize,
+                         int64_t ystart, int64_t yend, int64_t ychunksize,
+                         std::function<void(int id, int64_t, int64_t,
+                                            int64_t, int64_t)>&& task,
+                         parallel_options opt)
+{
+    opt.resolve ();
+    if (opt.singlethread()
+          || (xchunksize >= (xend-xstart) && ychunksize >= (yend-ystart))
+          || opt.pool->very_busy()) {
+        task (-1, xstart, xend, ystart, yend);
+        return;
+    }
+    if (ychunksize < 1)
+        ychunksize = std::max (int64_t(1), (yend-ystart) / (2*opt.maxthreads));
+    if (xchunksize < 1) {
+        int64_t ny = std::max (int64_t(1), (yend-ystart) / ychunksize);
+        int64_t nx = std::max (int64_t(1), opt.maxthreads / ny);
+        xchunksize = std::max (int64_t(1), (xend-xstart) / nx);
+    }
+    task_set ts (opt.pool);
+    for (auto y = ystart; y < yend; y += ychunksize) {
+        int64_t ychunkend = std::min (yend, y+ychunksize);
+        for (auto x = xstart; x < xend; x += xchunksize) {
+            int64_t xchunkend = std::min (xend, x+xchunksize);
+            ts.push (opt.pool->push (task, x, xchunkend, y, ychunkend));
+        }
+    }
 }
 
 

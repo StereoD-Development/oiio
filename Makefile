@@ -36,7 +36,7 @@ CMAKE ?= cmake
 ifndef OPENIMAGEIO_SITE
     OPENIMAGEIO_SITE := ${shell uname -n}
 endif
-ifneq (${shell echo ${OPENIMAGEIO_SITE} | grep imageworks},)
+ifneq (${shell echo ${OPENIMAGEIO_SITE} | grep imageworks.com},)
 include ${working_dir}/site/spi/Makefile-bits
 endif
 
@@ -79,10 +79,6 @@ ifneq (${USE_QT},)
 MY_CMAKE_FLAGS += -DUSE_QT:BOOL=${USE_QT}
 endif
 
-ifneq (${FORCE_OPENGL_1},)
-MY_CMAKE_FLAGS += -DFORCE_OPENGL_1:BOOL=${FORCE_OPENGL_1}
-endif
-
 ifneq (${OIIO_THREAD_ALLOW_DCLP},)
 MY_CMAKE_FLAGS += -DOIIO_THREAD_ALLOW_DCLP:BOOL=${OIIO_THREAD_ALLOW_DCLP}
 endif
@@ -97,10 +93,6 @@ endif
 
 ifneq (${USE_PYTHON},)
 MY_CMAKE_FLAGS += -DUSE_PYTHON:BOOL=${USE_PYTHON}
-endif
-
-ifneq (${USE_PYTHON3},)
-MY_CMAKE_FLAGS += -DUSE_PYTHON3:BOOL=${USE_PYTHON3}
 endif
 
 ifneq (${PYTHON_VERSION},)
@@ -157,10 +149,6 @@ endif
 
 ifneq (${USE_NUKE},)
 MY_CMAKE_FLAGS += -DUSE_NUKE:BOOL=${USE_NUKE}
-endif
-
-ifneq (${USE_OPENSSL},)
-MY_CMAKE_FLAGS += -DUSE_OPENSSL:BOOL=${USE_OPENSSL}
 endif
 
 ifneq (${USE_OPENCV},)
@@ -266,6 +254,10 @@ ifneq (${USE_SIMD},)
 MY_CMAKE_FLAGS += -DUSE_SIMD:STRING="${USE_SIMD}"
 endif
 
+ifneq (${TEX_BATCH_SIZE},)
+MY_CMAKE_FLAGS += -DTEX_BATCH_SIZE:STRING="${TEX_BATCH_SIZE}"
+endif
+
 ifneq (${TEST},)
 TEST_FLAGS += -R ${TEST}
 endif
@@ -279,7 +271,7 @@ MY_CMAKE_FLAGS += -G Ninja
 BUILDSENTINEL := build.ninja
 endif
 
-ifneq (${CODECOV},)
+ifeq (${CODECOV},1)
 MY_CMAKE_FLAGS += -DCMAKE_BUILD_TYPE:STRING=Debug -DCODECOV:BOOL=${CODECOV}
 endif
 
@@ -304,6 +296,10 @@ endif
 
 ifneq (${USE_FREETYPE},)
 MY_CMAKE_FLAGS += -DUSE_FREETYPE:BOOL=${USE_FREETYPE}
+endif
+
+ifneq (${BUILD_MISSING_DEPS},)
+MY_CMAKE_FLAGS += -DBUILD_MISSING_DEPS:BOOL=${BUILD_MISSING_DEPS}
 endif
 
 
@@ -393,7 +389,6 @@ TEST_FLAGS += --force-new-ctest-process --output-on-failure
 # 'make test' does a full build and then runs all tests
 test: cmake
 	@ ${CMAKE} -E cmake_echo_color --switch=$(COLOR) --cyan "Running tests ${TEST_FLAGS}..."
-	@ # if [ "${CODECOV}" == "1" ] ; then lcov -b ${build_dir} -d ${build_dir} -z ; rm -rf ${build_dir}/cov ; fi
 	@ ( cd ${build_dir} ; PYTHONPATH=${PWD}/${build_dir}/src/python ctest -E broken ${TEST_FLAGS} )
 	@ ( if [ "${CODECOV}" == "1" ] ; then \
 	      cd ${build_dir} ; \
@@ -469,9 +464,7 @@ help:
 	@echo "      USE_EXTERNAL_PUGIXML=1   Use the system PugiXML, not the one in OIIO"
 	@echo "      USE_QT=0                 Skip anything that needs Qt"
 	@echo "      USE_OPENGL=0             Skip anything that needs OpenGL"
-	@echo "      FORCE_OPENGL_1=1         Force iv to use OpenGL's fixed pipeline"
 	@echo "      USE_PYTHON=0             Don't build the Python binding"
-	@echo "      USE_PYTHON3=1            If 1, try to build against Python3, not 2.x"
 	@echo "      PYTHON_VERSION=2.6       Specify the Python version"
 	@echo "      USE_FIELD3D=0            Don't build the Field3D plugin"
 	@echo "      FIELD3D_HOME=path        Custom Field3D installation"
@@ -499,9 +492,11 @@ help:
 	@echo "      OIIO_BUILD_TOOLS=0       Skip building the command-line tools"
 	@echo "      OIIO_BUILD_TESTS=0       Skip building the unit tests"
 	@echo "      BUILD_OIIOUTIL_ONLY=1    Build *only* libOpenImageIO_Util"
-	@echo "      USE_SIMD=arch            Build with SIMD support (choices: 0, sse2, sse3,"
-	@echo "                                  ssse3, sse4.1, sse4.2, f16c, avx, avx2"
-	@echo "                                  comma-separated ok)"
+	@echo "      USE_SIMD=arch            Build with SIMD support (comma-separated choices:"
+	@echo "                                  0, sse2, sse3, ssse3, sse4.1, sse4.2, f16c,"
+	@echo "                                  avx, avx2, avx512f)"
+	@echo "      TEX_BATCH_SIZE=16        Override TextureSystem SIMD batch size"
+	@echo "      BUILD_MISSING_DEPS=1     Try to download/build missing dependencies"
 	@echo "  make test, extra options:"
 	@echo "      TEST=regex               Run only tests matching the regex"
 	@echo ""

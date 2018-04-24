@@ -37,6 +37,7 @@
 #include <OpenImageIO/sysutil.h>
 #include <OpenImageIO/thread.h>
 #include <OpenImageIO/timer.h>
+#include <OpenImageIO/benchmark.h>
 #include <OpenImageIO/unittest.h>
 #include <OpenImageIO/ustring.h>
 
@@ -134,7 +135,7 @@ time_thread_pool ()
         // trivial function, then waits for them to finish and tears down
         // the group.
         auto func = [=](){
-            task_set<void> taskset (pool);
+            task_set taskset (pool);
             for (int i = 0; i < nt; ++i) {
                 taskset.push (pool->push (do_nothing));
             }
@@ -149,6 +150,16 @@ time_thread_pool ()
         if (! wedge)
             break;    // don't loop if we're not wedging
     }
+
+    Benchmarker bench;
+    bench ("std::this_thread::get_id()", [=](){
+        DoNotOptimize (std::this_thread::get_id());
+    });
+    std::thread::id threadid = std::this_thread::get_id();
+    bench ("register/deregister pool worker", [=](){
+        pool->register_worker (threadid);
+        pool->deregister_worker (threadid);
+    });
 }
 
 

@@ -1,7 +1,7 @@
 cmake_minimum_required (VERSION 3.2.2)
 cmake_policy (SET CMP0048 NEW)  # Allow VERSION specifier in project()
 project (OpenImageIO
-         VERSION 1.8.5
+         VERSION 1.9.2
          LANGUAGES CXX C)
 set (PROJ_NAME OIIO)    # short name, caps
 string (TOLOWER ${PROJ_NAME} PROJ_NAME_LOWER)  # short name lower case
@@ -51,6 +51,8 @@ if (CMAKE_USE_FOLDERS)
     set_property (GLOBAL PROPERTY USE_FOLDERS ON)
 endif ()
 
+include (GNUInstallDirs)
+
 set (CMAKE_MODULE_PATH
      "${PROJECT_SOURCE_DIR}/src/cmake/modules"
      "${PROJECT_SOURCE_DIR}/src/cmake")
@@ -68,13 +70,10 @@ option (OIIO_BUILD_TOOLS "Build the command-line tools" ON)
 option (OIIO_BUILD_TESTS "Build the unit tests" ON)
 option (USE_OPENGL "Include OpenGL support" ON)
 option (USE_QT "Include Qt support" ON)
-option (FORCE_OPENGL_1 "Force iv to use OpenGL's fixed pipeline")
 option (USE_PYTHON "Build the Python bindings" ON)
-option (USE_PYTHON3 "Build the Python3 bindings")
-set (PYTHON_VERSION 2.6)
-set (PYTHON3_VERSION 3.2)
-option (PYLIB_INCLUDE_SONAME "If ON, soname/soversion will be set for Python module library")
-option (PYLIB_LIB_PREFIX "If ON, prefix the Python module with 'lib'")
+set (PYTHON_VERSION "2.7" CACHE STRING "Target version of python to find")
+option (PYLIB_INCLUDE_SONAME "If ON, soname/soversion will be set for Python module library" OFF)
+option (PYLIB_LIB_PREFIX "If ON, prefix the Python module with 'lib'" OFF)
 option (USE_FIELD3D "Use Field3D if found" ON)
 option (USE_FFMPEG "Use FFmpeg if found" ON)
 set (JPEG_PATH "" CACHE STRING "Custom JPEG path")
@@ -83,7 +82,6 @@ set (JPEGTURBO_PATH "" CACHE STRING "Custom JPEG-Turbo path")
 option (USE_OPENJPEG "Use OpenJpeg if found" ON)
 option (USE_OCIO "Use OpenColorIO for color management if found" ON)
 option (USE_OPENCV "Use OpenCV if found" ON)
-option (USE_OPENSSL "Use OpenSSL if found (for faster SHA-1)")
 option (USE_FREETYPE "Use Freetype if found" ON)
 option (USE_GIF "Use GIF if found" ON)
 option (USE_PTEX "Use PTex if found" ON)
@@ -97,15 +95,21 @@ set (USE_EXTERNAL_PUGIXML OFF CACHE BOOL
      "Use an externally built shared library version of the pugixml library")
 set (PUGIXML_HOME "" CACHE STRING "Hint about where to find external PugiXML library")
 option (USE_DICOM "Use DICOM if DCMTK is found" ON)
-
+set (TEX_BATCH_SIZE "" CACHE STRING "Force TextureSystem SIMD batch size (e.g. 16)")
 set (SOVERSION ${OIIO_VERSION_MAJOR}.${OIIO_VERSION_MINOR}
      CACHE STRING "Set the SO version in the SO name of the output library")
 option (BUILD_OIIOUTIL_ONLY "If ON, will build *only* libOpenImageIO_Util")
+option (BUILD_DOCS "If ON, build documentation and man pages.")
+option (INSTALL_DOCS "If ON, install documentation and man pages.")
+
 
 if (NOT OIIO_THREAD_ALLOW_DCLP)
     add_definitions ("-DOIIO_THREAD_ALLOW_DCLP=0")
 endif ()
 
+if (TEX_BATCH_SIZE)
+    add_definitions ("-DOIIO_TEXTURE_SIMD_BATCH_WIDTH=${TEX_BATCH_SIZE}")
+endif ()
 
 # Set the default namespace
 set (PROJ_NAMESPACE "${${PROJ_NAME}_NAMESPACE}")
@@ -132,6 +136,9 @@ include (CTest)
 
 # Tell CMake to process the sub-directories
 add_subdirectory (src/libutil)
+
+find_or_download_robin_map ()
+
 
 # Add IO plugin directories -- if we are embedding plugins, we need to visit
 # these directories BEFORE the OpenImageIO target is established (in
@@ -180,17 +187,15 @@ if (NOT EMBEDPLUGINS AND NOT BUILD_OIIOUTIL_ONLY)
     endforeach ()
 endif ()
 
-if (USE_PYTHON AND boost_PYTHON_FOUND AND NOT BUILD_OIIOUTIL_ONLY)
+if (USE_PYTHON AND NOT BUILD_OIIOUTIL_ONLY)
+    find_or_download_pybind11 ()
     add_subdirectory (src/python)
-endif ()
-if (USE_PYTHON3 AND boost_PYTHON_FOUND AND NOT BUILD_OIIOUTIL_ONLY)
-    #build the python3 module in a different binary directory since it will
-    #have the same name as the python2 module (e.g. OpenImageIO.so)
-    add_subdirectory (src/python src/python3)
 endif ()
 
 add_subdirectory (src/include)
-add_subdirectory (src/doc)
+if (BUILD_DOCS)
+    add_subdirectory (src/doc)
+endif ()
 add_subdirectory (src/fonts)
 add_subdirectory (src/nuke)
 
@@ -227,8 +232,8 @@ add_custom_target ( CopyFiles ALL DEPENDS "${CMAKE_BINARY_DIR}/testsuite/runtest
 # Basic tests that apply even to continuous integration tests:
 oiio_add_tests (
                 gpsread misnamed-file nonwhole-tiles
-                oiiotool oiiotool-attribs
-                oiiotool-composite oiiotool-deep oiiotool-fixnan
+                oiiotool oiiotool-attribs oiiotool-composite oiiotool-copy
+                oiiotool-deep oiiotool-fixnan
                 oiiotool-pattern oiiotool-readerror
                 oiiotool-subimage oiiotool-text oiiotool-xform
                 maketx oiiotool-maketx
@@ -236,7 +241,7 @@ oiio_add_tests (
                 dither dup-channels
                 dpx ico iff
                 jpeg-corrupt-exif
-                png
+                null png
                 psd psd-colormodes
                 rla sgi
                 rational
@@ -261,7 +266,7 @@ oiio_add_tests (
 # We also exclude these tests if this is a sanitizer build on Linux,
 # because the Python interpreter itself won't be linked with the right asan
 # libraries to run correctly.
-if (USE_PYTHON AND boost_PYTHON_FOUND AND NOT BUILD_OIIOUTIL_ONLY)
+if (USE_PYTHON AND NOT BUILD_OIIOUTIL_ONLY)
     if (NOT SANITIZE_ON_LINUX)
         oiio_add_tests (
                 python-typedesc python-imagespec python-roi python-deep
@@ -271,6 +276,10 @@ if (USE_PYTHON AND boost_PYTHON_FOUND AND NOT BUILD_OIIOUTIL_ONLY)
     endif ()
 endif ()
 
+# Add tests that require OCIO
+if (USE_OCIO AND OCIO_FOUND)
+    oiio_add_tests (oiiotool-color)
+endif ()
 
 # Advanced tests that are done by hand and for releases:
 # FIXME -- at some point, try to fix these or provide new ref images
@@ -292,7 +301,7 @@ oiio_add_tests (bmp
 
 oiio_add_tests (tiff-suite tiff-depths tiff-misc
     IMAGEDIR libtiffpic
-    URL http://www.remotesensing.org/libtiff/images.html)
+    URL http://www.simplesystems.org/libtiff/images.html)
 
 oiio_add_tests (openexr-suite openexr-multires openexr-chroma openexr-v2 perchannel
     IMAGEDIR openexr-images
@@ -310,6 +319,11 @@ oiio_add_tests (jpeg2000
 
 oiio_add_tests (pnm
     IMAGEDIR oiio-images/pnm
+    URL "Recent checkout of oiio-images")
+
+oiio_add_tests (raw
+    FOUNDVAR LIBRAW_FOUND
+    IMAGEDIR oiio-images/raw
     URL "Recent checkout of oiio-images")
 
 oiio_add_tests (targa-tgautils

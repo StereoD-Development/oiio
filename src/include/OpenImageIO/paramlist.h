@@ -113,13 +113,9 @@ public:
     }
 
     // Rvalue ref -- "move constructor"
-    ParamValue (ParamValue&& p)
-        : m_name(p.m_name), m_nvalues(p.m_nvalues), m_interp(p.m_interp),
-          m_copy(p.m_copy), m_nonlocal(p.m_nonlocal)
-    {
-        m_type = p.m_type;
-        m_data.ptr = p.m_data.ptr;
-        p.m_data.ptr = nullptr;
+    ParamValue (ParamValue&& p) {
+        memcpy (this, &p, sizeof(ParamValue));  // nothing that won't memcpy
+        p.m_data.ptr = nullptr;   // but make sure the old one won't free
     }
 
     ~ParamValue () { clear_value(); }
@@ -157,15 +153,13 @@ public:
     int datasize () const { return m_nvalues * static_cast<int>(m_type.size()); }
     Interp interp () const { return (Interp)m_interp; }
     void interp (Interp i) { m_interp = (unsigned char )i; }
+    bool is_nonlocal () const { return m_nonlocal; }
 
     friend void swap (ParamValue &a, ParamValue &b) {
-        std::swap (a.m_name,     b.m_name);
-        std::swap (a.m_type,     b.m_type);
-        std::swap (a.m_nvalues,  b.m_nvalues);
-        std::swap (a.m_interp,   b.m_interp);
-        std::swap (a.m_data.ptr, b.m_data.ptr);
-        std::swap (a.m_copy,     b.m_copy);
-        std::swap (a.m_nonlocal, b.m_nonlocal);
+        char tmp[sizeof(ParamValue)];
+        memcpy (tmp, &a, sizeof(ParamValue));
+        memcpy (&a, &b, sizeof(ParamValue));
+        memcpy (&b, tmp, sizeof(ParamValue));
     }
 
     // Use with extreme caution! This is just doing a cast. You'd better
@@ -180,12 +174,14 @@ public:
     /// from a string, but only if the string is entirely a valid int
     /// format. Unconvertable types return the default value.
     int get_int (int defaultval=0) const;
+    int get_int_indexed (int index, int defaultval=0) const;
 
     /// Retrive a float, with converstions from a wide variety of type
     /// cases, including integers. It will retrive from a string, but only
     /// if the string is entirely a valid float format. Unconvertable types
     /// return the default value.
     float get_float (float defaultval=0) const;
+    float get_float_indexed (int index, float defaultval=0) const;
 
     /// Convert any type to a string value. An optional maximum number of
     /// elements is also passed. In the case of a single string, just the
@@ -201,13 +197,13 @@ public:
 private:
     ustring m_name;           ///< data name
     TypeDesc m_type;          ///< data type, which may itself be an array
+    union {
+        char localval[16];
+        const void *ptr;
+    } m_data;             ///< Our data, either a pointer or small local value
     int m_nvalues;            ///< number of values of the given type
     unsigned char m_interp;   ///< Interpolation type
     bool m_copy, m_nonlocal;
-    union {
-        ptrdiff_t localval;
-        const void *ptr;
-    } m_data;             ///< Our data, either a pointer or small local value
 
     void init_noclear (ustring _name, TypeDesc _type,
                        int _nvalues, const void *_value, bool _copy=true);
@@ -267,6 +263,19 @@ public:
     ustring get_ustring (string_view name,
                          string_view defaultval = string_view(),
                          bool casesensitive=false, bool convert=true) const;
+
+    /// Remove the named parameter, if it is in the list.
+    void remove (string_view name, TypeDesc type=TypeDesc::UNKNOWN,
+                bool casesensitive=true);
+
+    /// Does the list contain the named attribute?
+    bool contains (string_view name, TypeDesc type=TypeDesc::UNKNOWN,
+                   bool casesensitive=true);
+
+    // Add the param to the list, replacing in-place any existing one with
+    // the same name.
+    void add_or_replace (const ParamValue& pv, bool casesensitive=true);
+    void add_or_replace (ParamValue&& pv, bool casesensitive=true);
 
     /// Even more radical than clear, free ALL memory associated with the
     /// list itself.

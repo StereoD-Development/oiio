@@ -31,12 +31,17 @@
 
 #include <string>
 #include <cstdarg>
+#include <cstdlib>
 #include <vector>
 #include <iostream>
 #include <cmath>
 #include <sstream>
 #include <limits>
 #include <mutex>
+#include <locale.h>
+#if defined(__APPLE__) || defined(__FreeBSD__)
+#include <xlocale.h>
+#endif
 
 #include <boost/algorithm/string.hpp>
 
@@ -61,14 +66,45 @@ static std::mutex output_mutex;
 
 
 
+// Locale-independent quickie ASCII digit and alphanum tests, good enough
+// for our parsing.
+inline int isupper (char c) { return c >= 'A' && c <= 'Z'; }
+inline int islower (char c) { return c >= 'a' && c <= 'z'; }
+inline int isalpha (char c) { return isupper(c) || islower(c); }
+inline int isdigit (char c) { return c >= '0' && c <= '9'; }
+
+
+
+
+OIIO_NO_SANITIZE_ADDRESS
 const char *
 string_view::c_str() const
 {
     // Usual case: either empty, or null-terminated
     if (m_len == 0)   // empty string
         return "";
-    else if (m_chars[m_len] == 0)  // 0-terminated
+
+    // This clause attempts to find out if there's a string-teriminating
+    // '\0' character just beyond the boundary of the string_view, in which
+    // case, simply returning m_chars (with no ustring creation) is a valid
+    // C string.
+    //
+    // BUG: if the string_view does not simply wrap a null-terminated string
+    // (including a std::string or ustring) or substring thereof, and the
+    // the character past the end of the string is beyond an allocation
+    // boundary, this will be flagged by address sanitizer. And it
+    // misbehaves if the memory just beyond the string_view, which isn't
+    // part of the string, gets changed during the lifetime of the
+    // string_view, and no longer has that terminating null. I think that in
+    // the long run, we can't use this trick. I'm kicking that can down the
+    // road just a bit because it's such a performance win. But we
+    // eventually want to get rid of this method anyway, since it won't be
+    // in C++17 string_view. So maybe we'll find ourselves relying on it a
+    // lot less, and therefore the performance hit of doing it foolproof
+    // won't be as onerous.
+    if (m_chars[m_len] == 0)  // 0-terminated
         return m_chars;
+
     // Rare case: may not be 0-terminated. Bite the bullet and construct a
     // 0-terminated string.  We use ustring as a way to avoid any issues of
     // who cleans up the allocation, though it means that it will stay in
@@ -97,6 +133,7 @@ Strutil::sync_output (std::ostream& file, string_view str)
     if (str.size()) {
         std::unique_lock<std::mutex> lock (output_mutex);
         file << str;
+        file.flush ();
     }
 }
 
@@ -330,15 +367,30 @@ Strutil::wordwrap (string_view src, int columns, int prefix)
 
 
 
-namespace {
-static std::locale loc = std::locale::classic();
+
+static std::locale& loc ()
+{
+    // Rather than have a file-level static locale which could suffer from
+    // the static initialization order fiasco, make it a static pointer
+    // inside the function that is allocated the first time it's needed. It
+    // will "leak" in the sense that this one locale is never deleted, but
+    // so what?
+#if OIIO_MSVS_BEFORE_2015
+    // MSVS prior to 2015 could not be trusted to make in-function static
+    // initialization thread-safe, as required by C++11.
+    static spin_mutex mutex;
+    spin_lock lock (mutex);
+#endif
+    static std::locale *loc = new std::locale (std::locale::classic());
+    return *loc;
 }
+
 
 
 bool
 Strutil::iequals (string_view a, string_view b)
 {
-    return boost::algorithm::iequals (a, b, loc);
+    return boost::algorithm::iequals (a, b, loc());
 }
 
 
@@ -352,7 +404,7 @@ Strutil::starts_with (string_view a, string_view b)
 bool
 Strutil::istarts_with (string_view a, string_view b)
 {
-    return boost::algorithm::istarts_with (a, b, loc);
+    return boost::algorithm::istarts_with (a, b, loc());
 }
 
 
@@ -366,7 +418,7 @@ Strutil::ends_with (string_view a, string_view b)
 bool
 Strutil::iends_with (string_view a, string_view b)
 {
-    return boost::algorithm::iends_with (a, b, loc);
+    return boost::algorithm::iends_with (a, b, loc());
 }
 
 
@@ -380,21 +432,21 @@ Strutil::contains (string_view a, string_view b)
 bool
 Strutil::icontains (string_view a, string_view b)
 {
-    return boost::algorithm::icontains (a, b, loc);
+    return boost::algorithm::icontains (a, b, loc());
 }
 
 
 void
 Strutil::to_lower (std::string &a)
 {
-    boost::algorithm::to_lower (a, loc);
+    boost::algorithm::to_lower (a, loc());
 }
 
 
 void
 Strutil::to_upper (std::string &a)
 {
-    boost::algorithm::to_upper (a, loc);
+    boost::algorithm::to_upper (a, loc());
 }
 
 
@@ -577,18 +629,17 @@ Strutil::utf16_to_utf8 (const std::wstring& str)
 
 
 char *
-Strutil::safe_strcpy (char *dst, const char *src, size_t size)
+Strutil::safe_strcpy (char *dst, string_view src, size_t size)
 {
-    if (src) {
-        for (size_t i = 0;  i < size;  ++i) {
-            if (! (dst[i] = src[i]))
-                return dst;   // finished, and copied the 0 character
-        }
-        // If we got here, we have gotten to the maximum length, and still
-        // no terminating 0, so add it!
-        dst[size-1] = 0;
+    if (src.size()) {
+        size_t end = std::min (size-1, src.size());
+        for (size_t i = 0;  i < end;  ++i)
+            dst[i] = src[i];
+        for (size_t i = end; i < size; ++i)
+            dst[i] = 0;
     } else {
-        dst[0] = 0;
+        for (size_t i = 0; i < size; ++i)
+            dst[i] = 0;
     }
     return dst;
 }
@@ -659,14 +710,12 @@ Strutil::parse_int (string_view &str, int &val, bool eat)
     skip_whitespace (p);
     if (! p.size())
         return false;
-    const char *end = p.begin();
-    int v = strtol (p.begin(), (char**)&end, 10);
-    if (end == p.begin())
+    size_t endpos = 0;
+    int v = Strutil::stoi (p, &endpos);
+    if (endpos == 0)
         return false;  // no integer found
-    if (eat) {
-        p.remove_prefix (end-p.begin());
-        str = p;
-    }
+    if (eat)
+        str = p.substr (endpos);
     val = v;
     return true;
 }
@@ -680,14 +729,12 @@ Strutil::parse_float (string_view &str, float &val, bool eat)
     skip_whitespace (p);
     if (! p.size())
         return false;
-    const char *end = p.begin();
-    float v = (float) strtod (p.begin(), (char**)&end);
-    if (end == p.begin())
+    size_t endpos = 0;
+    float v = Strutil::stof (p, &endpos);
+    if (endpos == 0)
         return false;  // no integer found
-    if (eat) {
-        p.remove_prefix (end-p.begin());
-        str = p;
-    }
+    if (eat)
+        str = p.substr (endpos);
     val = v;
     return true;
 }
@@ -708,10 +755,8 @@ Strutil::parse_string (string_view &str, string_view &val,
             break;   // not quoted and we hit whitespace: we're done
         if (quoted && *end == '\"' && ! escaped)
             break;   // closing quite -- we're done (beware embedded quote)
-        if (p[0] == '\\')
-            escaped = true;
+        escaped = (p[0] == '\\');
         ++end;
-        escaped = false;
     }
     if (quoted && keep_quotes == KeepQuotes) {
         if (*end == '\"')
@@ -996,6 +1041,279 @@ Strutil::base64_encode (string_view str)
             ret += '=';
     }
     return ret;
+}
+
+
+
+// Helper: Eat the given number of chars from str, then return the next
+// char, or 0 if no more chars are in str.
+inline unsigned char cnext (string_view& str, int eat=1)
+{
+    str.remove_prefix (eat);
+    return OIIO_LIKELY(str.size()) ? str.front() : 0;
+}
+
+
+
+int
+Strutil::stoi (string_view str, size_t *pos, int base)
+{
+    // We roll our own stoi so that we can directly use it with a
+    // string_view and also hardcode it without any locale dependence. The
+    // system stoi/atoi/strtol/etc. needs to be null-terminated.
+    string_view str_orig = str;
+    Strutil::skip_whitespace (str);
+
+    // c is always the next char to parse, or 0 if there's no more
+    unsigned char c = cnext (str, 0);  // don't eat the char
+
+    // Handle leading - or +
+    bool neg = (c == '-');
+    if (c == '-' || c == '+')
+        c = cnext (str);
+
+    // Allow "0x" to start hex number if base is 16 or 0 (any)
+    if ((base == 0 || base == 16) &&
+        c == '0' && str.size() >= 1 && (str[1] == 'x' || str[1] == 'X')) {
+        base = 16;
+        c = cnext (str, 2);
+    }
+    // For "any" base, collapse to base 10 unless leading 0 means it's octal
+    if (base == 0)
+        base = c == '0' ? 8 : 10;
+
+    // Accumulate into a 64 bit int to make overflow handling simple.
+    // If we ever need a str-to-int64 conversion, we'll need to be more
+    // careful with figuring out overflow. But the 32 bit case is easy.
+    int64_t acc = 0;
+    bool overflow = false;   // Set if we overflow
+    bool anydigits = false;  // Have we parsed any digits at all?
+    int64_t maxval = neg ? -int64_t(std::numeric_limits<int>::min()) : std::numeric_limits<int>::max();
+    for ( ; OIIO_LIKELY(c); c = cnext(str)) {
+        if (OIIO_LIKELY(isdigit(c)))
+            c -= '0';
+        else if (isalpha(c))
+            c -= isupper(c) ? 'A' - 10 : 'a' - 10;
+        else {
+            break;  // done
+        }
+        if (c >= base)
+            break;
+        acc = acc * base + c;
+        anydigits = true;
+        if (OIIO_UNLIKELY(acc > maxval))
+            overflow = true;
+    }
+    if (OIIO_UNLIKELY(!anydigits)) {
+        str = str_orig;
+    } else if (OIIO_UNLIKELY(overflow)) {
+        acc = neg ? std::numeric_limits<int>::min() : std::numeric_limits<int>::max();
+    } else {
+        if (neg)
+            acc = -acc;
+    }
+    if (pos)
+        *pos = size_t (str.data() - str_orig.data());
+    return static_cast<int>(acc);
+}
+
+
+
+float
+Strutil::strtof (const char *nptr, char **endptr)
+{
+    // Can use strtod_l on platforms that support it
+#if defined (__linux__) || defined(__APPLE__) || defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__GLIBC__)
+    // static initialization inside function is thread-safe by C++11 rules!
+    static locale_t c_loc = newlocale(LC_ALL_MASK, "C", nullptr);
+# ifdef __APPLE__
+    // On OSX, strtod_l is for some reason drastically faster than strtof_l.
+    return static_cast<float>(strtod_l (nptr, endptr, c_loc));
+# else
+    return strtof_l (nptr, endptr, c_loc);
+# endif
+#elif defined (_WIN32)
+    // Windows has _strtod_l
+    static _locale_t c_loc = _create_locale(LC_ALL, "C");
+    return static_cast<float>(_strtod_l (nptr, endptr, c_loc));
+#else
+    // On platforms without strtof_l...
+    std::locale native; // default ctr gets current global locale
+    char nativepoint = std::use_facet<std::numpunct<char>>(native).decimal_point();
+    // If the native locale uses decimal, just directly use strtof.
+    if (nativepoint == '.')
+        return strtof (nptr, endptr);
+    // Complex case -- CHEAT by making a copy of the string and replacing
+    // the decimal, then use system strtof!
+    std::string s (nptr);
+    const char* pos = strchr (nptr, nativepoint);
+    if (pos) {
+        s[pos-nptr] = nativepoint;
+        auto d = strtof (s.c_str(), endptr);
+        if (endptr)
+            *endptr = (char *)nptr + (*endptr - s.c_str());
+        return d;
+    }
+    // No decimal point at all -- use regular strtof
+    return strtof (s.c_str(), endptr);
+#endif
+}
+
+
+double
+Strutil::strtod (const char *nptr, char **endptr)
+{
+    // Can use strtod_l on platforms that support it
+#if defined (__linux__) || defined(__APPLE__) || defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || defined(__GLIBC__)
+    // static initialization inside function is thread-safe by C++11 rules!
+    static locale_t c_loc = newlocale(LC_ALL_MASK, "C", nullptr);
+    return strtod_l (nptr, endptr, c_loc);
+#elif defined (_WIN32)
+    // Windows has _strtod_l
+    static _locale_t c_loc = _create_locale(LC_ALL, "C");
+    return _strtod_l (nptr, endptr, c_loc);
+#else
+    // On platforms without strtod_l...
+    std::locale native; // default ctr gets current global locale
+    char nativepoint = std::use_facet<std::numpunct<char>>(native).decimal_point();
+    // If the native locale uses decimal, just directly use strtod.
+    if (nativepoint == '.')
+        return strtod (nptr, endptr);
+    // Complex case -- CHEAT by making a copy of the string and replacing
+    // the decimal, then use system strtod!
+    std::string s (nptr);
+    const char* pos = strchr (nptr, nativepoint);
+    if (pos) {
+        s[pos-nptr] = nativepoint;
+        auto d = ::strtod (s.c_str(), endptr);
+        if (endptr)
+            *endptr = (char *)nptr + (*endptr - s.c_str());
+        return d;
+    }
+    // No decimal point at all -- use regular strtod
+    return strtod (s.c_str(), endptr);
+#endif
+}
+
+// Notes:
+//
+// FreeBSD's implementation of strtod:
+//   https://svnweb.freebsd.org/base/stable/10/contrib/gdtoa/strtod.c?view=markup
+// Python's implementation  of strtod: (BSD license)
+//   https://hg.python.org/cpython/file/default/Python/pystrtod.c
+// Julia's implementation (combo of strtod_l and Python's impl):
+//   https://github.com/JuliaLang/julia/blob/master/src/support/strtod.c
+// MSDN documentation on Windows _strtod_l and friends:
+//   https://msdn.microsoft.com/en-us/library/kxsfc1ab.aspx   (_strtod_l)
+//   https://msdn.microsoft.com/en-us/library/4zx9aht2.aspx   (_create_locale)
+// cppreference on locale:
+//   http://en.cppreference.com/w/cpp/locale/locale
+
+
+
+float
+Strutil::stof (const char* s, size_t* pos)
+{
+    if (s) {
+        char* endptr;
+        float r = Strutil::strtof (s, &endptr);
+        if (endptr != s) {
+            if (pos)
+                *pos = size_t (endptr - s);
+            return r;
+        }
+    }
+    // invalid
+    if (pos)
+        *pos = 0;
+    return 0;
+}
+
+
+float
+Strutil::stof (const std::string& s, size_t* pos)
+{
+    return Strutil::stof(s.c_str(), pos);
+}
+
+
+float
+Strutil::stof (string_view s, size_t* pos)
+{
+    // string_view can't be counted on to end with a terminating null, so
+    // for safety, create a temporary string. This looks wasteful, but it's
+    // not as bad as you think -- fully compliant C++ >= 11 implementations
+    // will use the "short string optimization", meaning that this string
+    // creation will NOT need an allocation/free for most strings we expect
+    // to hold a text representation of a float.
+    return Strutil::stof (std::string(s).c_str(), pos);
+}
+
+
+
+double
+Strutil::stod (const char* s, size_t* pos)
+{
+    if (s) {
+        char* endptr;
+        double r = Strutil::strtod (s, &endptr);
+        if (endptr != s) {
+            if (pos)
+                *pos = size_t (endptr - s);
+            return r;
+        }
+    }
+    // invalid
+    if (pos)
+        *pos = 0;
+    return 0;
+}
+
+
+double
+Strutil::stod (const std::string& s, size_t* pos)
+{
+    return Strutil::stod(s.c_str(), pos);
+}
+
+
+double
+Strutil::stod (string_view s, size_t* pos)
+{
+    // string_view can't be counted on to end with a terminating null, so
+    // for safety, create a temporary string. This looks wasteful, but it's
+    // not as bad as you think -- fully compliant C++ >= 11 implementations
+    // will use the "short string optimization", meaning that this string
+    // creation will NOT need an allocation/free for most strings we expect
+    // to hold a text representation of a float.
+    return Strutil::stod (std::string(s).c_str(), pos);
+}
+
+
+
+bool
+Strutil::string_is_int (string_view s)
+{
+    size_t pos;
+    Strutil::stoi (s, &pos);
+    if (pos) {  // skip remaining whitespace
+        s.remove_prefix (pos);
+        Strutil::skip_whitespace (s);
+    }
+    return pos && s.empty();   // consumed the whole string
+}
+
+
+bool
+Strutil::string_is_float (string_view s)
+{
+    size_t pos;
+    Strutil::stof (s, &pos);
+    if (pos) {  // skip remaining whitespace
+        s.remove_prefix (pos);
+        Strutil::skip_whitespace (s);
+    }
+    return pos && s.empty();   // consumed the whole string
 }
 
 

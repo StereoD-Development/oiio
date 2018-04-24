@@ -43,6 +43,7 @@
 #include <OpenImageIO/thread.h>
 #include <OpenImageIO/filesystem.h>
 #include <OpenImageIO/hash.h>
+#include "imageio_pvt.h"
 
 #ifdef USE_FREETYPE
 #include <ft2build.h>
@@ -57,10 +58,14 @@ template<typename T>
 static bool
 fill_const_ (ImageBuf &dst, const float *values, ROI roi=ROI(), int nthreads=1)
 {
-    ImageBufAlgo::parallel_image (roi, nthreads, [&](ROI roi){
-        for (ImageBuf::Iterator<T> p (dst, roi);  !p.done();  ++p)
-            for (int c = roi.chbegin;  c < roi.chend;  ++c)
-                p[c] = values[c];
+    ImageBufAlgo::parallel_image (roi, nthreads, [=,&dst](ROI roi){
+        // Do the data conversion just once, store locally.
+        T *tvalues = ALLOCA (T, roi.chend);
+        for (int i = roi.chbegin; i < roi.chend; ++i)
+            tvalues[i] = convert_type<float,T>(values[i]);
+        int nchannels = roi.nchannels();
+        for (ImageBuf::Iterator<T,T> p (dst, roi);  !p.done();  ++p)
+            memcpy ((T*)p.rawptr()+roi.chbegin, tvalues+roi.chbegin, nchannels*sizeof(T));
     });
     return true;
 }
@@ -107,6 +112,7 @@ fill_corners_ (ImageBuf &dst, const float *topleft, const float *topright,
 bool
 ImageBufAlgo::fill (ImageBuf &dst, const float *pixel, ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::fill");
     ASSERT (pixel && "fill must have a non-NULL pixel value pointer");
     if (! IBAprep (roi, &dst))
         return false;
@@ -121,6 +127,7 @@ bool
 ImageBufAlgo::fill (ImageBuf &dst, const float *top, const float *bottom,
                     ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::fill");
     ASSERT (top && bottom && "fill must have a non-NULL pixel value pointers");
     if (! IBAprep (roi, &dst))
         return false;
@@ -136,6 +143,7 @@ ImageBufAlgo::fill (ImageBuf &dst, const float *topleft, const float *topright,
                     const float *bottomleft, const float *bottomright,
                     ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::fill");
     ASSERT (topleft && topright && bottomleft && bottomright &&
             "fill must have a non-NULL pixel value pointers");
     if (! IBAprep (roi, &dst))
@@ -151,11 +159,15 @@ ImageBufAlgo::fill (ImageBuf &dst, const float *topleft, const float *topright,
 bool
 ImageBufAlgo::zero (ImageBuf &dst, ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::zero");
     if (! IBAprep (roi, &dst))
         return false;
     float *zero = ALLOCA(float,roi.chend);
     memset (zero, 0, roi.chend*sizeof(float));
-    return fill (dst, zero, roi, nthreads);
+    bool ok;
+    OIIO_DISPATCH_TYPES (ok, "zero", fill_const_, dst.spec().format,
+                         dst, zero, roi, nthreads);
+    return ok;
 }
 
 
@@ -179,6 +191,7 @@ ImageBufAlgo::render_point (ImageBuf &dst, int x, int y,
                             array_view<const float> color,
                             ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::render_point");
     if (! IBAprep (roi, &dst))
         return false;
 
@@ -305,6 +318,7 @@ ImageBufAlgo::render_line (ImageBuf &dst, int x1, int y1, int x2, int y2,
                            bool skip_first_point,
                            ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::render_line");
     if (! IBAprep (roi, &dst))
         return false;
 
@@ -326,7 +340,7 @@ ImageBufAlgo::render_line (ImageBuf &dst, int x1, int y1, int x2, int y2,
         alpha = color[roi.chend];
 
     bool ok;
-    OIIO_DISPATCH_TYPES (ok, "render_line", render_line_, dst.spec().format,
+    OIIO_DISPATCH_COMMON_TYPES (ok, "render_line", render_line_, dst.spec().format,
                          dst, x1, y1, x2, y2, color, alpha, skip_first_point,
                          roi, nthreads);
     return ok;
@@ -366,6 +380,7 @@ ImageBufAlgo::render_box (ImageBuf &dst, int x1, int y1, int x2, int y2,
                           array_view<const float> color, bool fill,
                           ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::render_box");
     if (! IBAprep (roi, &dst))
         return false;
     if (int(color.size()) < roi.chend) {
@@ -382,7 +397,7 @@ ImageBufAlgo::render_box (ImageBuf &dst, int x1, int y1, int x2, int y2,
     if (fill) {
         roi = roi_intersection (roi, ROI(x1, x2+1, y1, y2+1, 0, 1, 0, roi.chend));
         bool ok;
-        OIIO_DISPATCH_TYPES (ok, "render_box", render_box_, dst.spec().format,
+        OIIO_DISPATCH_COMMON_TYPES (ok, "render_box", render_box_, dst.spec().format,
                              dst, color, roi, nthreads);
         return ok;
     }
@@ -436,10 +451,11 @@ ImageBufAlgo::checker (ImageBuf &dst, int width, int height, int depth,
                        int xoffset, int yoffset, int zoffset,
                        ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::checker");
     if (! IBAprep (roi, &dst))
         return false;
     bool ok;
-    OIIO_DISPATCH_TYPES (ok, "checker", checker_, dst.spec().format,
+    OIIO_DISPATCH_COMMON_TYPES (ok, "checker", checker_, dst.spec().format,
                          dst, Dim3(width, height, depth), color1, color2,
                          Dim3(xoffset, yoffset, zoffset), roi, nthreads);
     return ok;
@@ -549,17 +565,18 @@ ImageBufAlgo::noise (ImageBuf &dst, string_view noisetype,
                      float A, float B, bool mono, int seed,
                      ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::noise");
     if (! IBAprep (roi, &dst))
         return false;
     bool ok;
     if (noisetype == "gaussian" || noisetype == "normal") {
-        OIIO_DISPATCH_TYPES (ok, "noise_gaussian", noise_gaussian_, dst.spec().format,
+        OIIO_DISPATCH_COMMON_TYPES (ok, "noise_gaussian", noise_gaussian_, dst.spec().format,
                              dst, A, B, mono, seed, roi, nthreads);
     } else if (noisetype == "uniform") {
-        OIIO_DISPATCH_TYPES (ok, "noise_uniform", noise_uniform_, dst.spec().format,
+        OIIO_DISPATCH_COMMON_TYPES (ok, "noise_uniform", noise_uniform_, dst.spec().format,
                              dst, A, B, mono, seed, roi, nthreads);
     } else if (noisetype == "salt") {
-        OIIO_DISPATCH_TYPES (ok, "noise_salt", noise_salt_, dst.spec().format,
+        OIIO_DISPATCH_COMMON_TYPES (ok, "noise_salt", noise_salt_, dst.spec().format,
                              dst, A, B, mono, seed, roi, nthreads);
     } else {
         ok = false;
@@ -590,8 +607,8 @@ text_size_from_unicode (std::vector<uint32_t> &utext, FT_Face face)
     size.xend = size.yend = std::numeric_limits<int>::min();
     FT_GlyphSlot slot = face->glyph;
     int x = 0;
-    for (size_t n = 0, e = utext.size();  n < e;  ++n) {
-        int error = FT_Load_Char (face, utext[n], FT_LOAD_RENDER);
+    for (auto ch : utext) {
+        int error = FT_Load_Char (face, ch, FT_LOAD_RENDER);
         if (error)
             continue;  // ignore errors
         size.ybegin = std::min (size.ybegin, -slot->bitmap_top);
@@ -604,8 +621,6 @@ text_size_from_unicode (std::vector<uint32_t> &utext, FT_Face face)
     return size;   // Font rendering not supported
 }
 
-} // anon namespace
-#endif
 
 
 // Given font name, resolve it to an existing font filename.
@@ -616,7 +631,7 @@ static bool
 resolve_font (int fontsize, string_view font_, std::string &result)
 {
     result.clear ();
-#ifdef USE_FREETYPE
+
     // If we know FT is broken, don't bother trying again
     if (ft_broken)
         return false;
@@ -644,20 +659,28 @@ resolve_font (int fontsize, string_view font_, std::string &result)
         if (systemRoot.size())
             font_search_dirs.push_back (std::string(systemRoot) + "/Fonts");
         font_search_dirs.emplace_back ("/usr/share/fonts");
+        font_search_dirs.emplace_back ("/usr/share/fonts/OpenImageIO");
         font_search_dirs.emplace_back ("/Library/Fonts");
+        font_search_dirs.emplace_back ("/Library/Fonts/OpenImageIO");
         font_search_dirs.emplace_back ("C:/Windows/Fonts");
+        font_search_dirs.emplace_back ("C:/Windows/Fonts/OpenImageIO");
         font_search_dirs.emplace_back ("/usr/local/share/fonts");
+        font_search_dirs.emplace_back ("/usr/local/share/fonts/OpenImageIO");
         font_search_dirs.emplace_back ("/opt/local/share/fonts");
+        font_search_dirs.emplace_back ("/opt/local/share/fonts/OpenImageIO");
         // Try $OPENIMAGEIOHOME/fonts
         string_view oiiohomedir = Sysutil::getenv ("OPENIMAGEIOHOME");
-        if (oiiohomedir.size())
+        if (oiiohomedir.size()) {
             font_search_dirs.push_back (std::string(oiiohomedir) + "/fonts");
+            font_search_dirs.push_back (std::string(oiiohomedir) + "/share/fonts/OpenImageIO");
+        }
         // Try ../fonts relative to where this executing binary came from
         std::string this_program = OIIO::Sysutil::this_program_path ();
         if (this_program.size()) {
             std::string path = Filesystem::parent_path (this_program);
             path = Filesystem::parent_path (path);
             font_search_dirs.push_back (path+"/fonts");
+            font_search_dirs.push_back (path+"/shared/fonts/OpenImageIO");
         }
     }
 
@@ -700,16 +723,17 @@ resolve_font (int fontsize, string_view font_, std::string &result)
     // Success
     result = font;
     return true;
-#else
-    return false;
-#endif
 }
+
+} // anon namespace
+#endif
 
 
 
 ROI
 ImageBufAlgo::text_size (string_view text, int fontsize, string_view font_)
 {
+    pvt::LoggedTimer logtime("IBA::text_size");
     ROI size;
 #ifdef USE_FREETYPE
     // Thread safety
@@ -743,8 +767,8 @@ ImageBufAlgo::text_size (string_view text, int fontsize, string_view font_)
     size.xbegin = size.ybegin = std::numeric_limits<int>::max();
     size.xend = size.yend = std::numeric_limits<int>::min();
     int x = 0;
-    for (size_t n = 0, e = utext.size();  n < e;  ++n) {
-        error = FT_Load_Char (face, utext[n], FT_LOAD_RENDER);
+    for (auto ch : utext) {
+        error = FT_Load_Char (face, ch, FT_LOAD_RENDER);
         if (error)
             continue;  // ignore errors
         size.ybegin = std::min (size.ybegin, -slot->bitmap_top);
@@ -784,6 +808,7 @@ ImageBufAlgo::render_text (ImageBuf &R, int x, int y, string_view text,
                            TextAlignX alignx, TextAlignY aligny,
                            int shadow, ROI roi, int nthreads)
 {
+    pvt::LoggedTimer logtime("IBA::render_text");
     if (R.spec().depth > 1) {
         R.error ("ImageBufAlgo::render_text does not support volume images");
         return false;
@@ -856,8 +881,8 @@ ImageBufAlgo::render_text (ImageBuf &R, int x, int y, string_view text,
     ImageBufAlgo::zero (textimg);
 
     // Glyph by glyph, fill in our txtimg buffer
-    for (size_t n = 0, e = utext.size();  n < e;  ++n) {
-        int error = FT_Load_Char (face, utext[n], FT_LOAD_RENDER);
+    for (auto ch : utext) {
+        int error = FT_Load_Char (face, ch, FT_LOAD_RENDER);
         if (error)
             continue;  // ignore errors
         // now, draw to our target surface

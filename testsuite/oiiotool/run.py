@@ -79,12 +79,6 @@ command += oiiotool ("negpos.exr -absdiffc 0.2,0.2,0.2 -d half -o absdiffc.exr")
 command += oiiotool ("src/tahoe-small.tif --chsum:weight=.2126,.7152,.0722 "
             + "-d uint8 -o chsum.tif")
 
-# test --colormap
-command += oiiotool ("--autocc src/tahoe-tiny.tif --colormap spectrum "
-            + "-d uint8 -o colormap-spectrum.tif")
-command += oiiotool ("--autocc src/tahoe-tiny.tif --colormap .25,.25,.25,0,.5,0,1,0,0 "
-            + "-d uint8 -o colormap-custom.tif")
-
 # test histogram generation
 command += oiiotool ("ref/histogram_input.png --histogram 256x256 0 "
             + "-o histogram_regular.tif")
@@ -143,17 +137,12 @@ command += info_command ("rgbahalf-zfloat.exr", safematch=1)
 
 # test hole filling
 command += oiiotool ("ref/hole.tif --fillholes -o tahoe-filled.tif")
+# test hole filling for a cropped image
+command += oiiotool ("-pattern checker 64x64+32+32 3 -ch R,G,B,A=1.0 -fullsize 128x128+0+0 --croptofull -fillholes -d uint8 -o growholes.tif")
 
 # test clamping
 command += oiiotool (parent + "/oiio-images/grid.tif --resize 50%"
             + " --clamp:min=0.2:max=,,0.5,1 -o grid-clamped.tif")
-
-# test unpremult/premult
-command += oiiotool ("--pattern constant:color=.1,.1,.1,1 100x100 4 " 
-            + " --fill:color=.2,.2,.2,.5 30x30+50+50 "
-            + " -d half -o premulttarget.exr")
-command += oiiotool ("premulttarget.exr --unpremult -o unpremult.exr")
-command += oiiotool ("unpremult.exr --premult -o premult.exr")
 
 # test kernel
 command += oiiotool ("--kernel bspline 15x15 -o bsplinekernel.exr")
@@ -219,8 +208,11 @@ command += oiiotool ("subimages-2.exr --sisplit -o subimage2.exr " +
                      "--pop -o subimage1.exr")
 
 # test sequences
-command += oiiotool ("src/tahoe-tiny.tif -o copyA.1-10#.jpg");
+command += oiiotool ("src/tahoe-tiny.tif -o copyA.1-10#.jpg")
 command += oiiotool (" --info  " +  " ".join(["copyA.{0:04}.jpg".format(x) for x in range(1,11)]))
+command += oiiotool ("--frames 1-5 --echo \"Sequence 1-5:  {FRAME_NUMBER}\"")
+command += oiiotool ("--frames -5-5 --echo \"Sequence -5-5:  {FRAME_NUMBER}\"")
+command += oiiotool ("--frames -5--2 --echo \"Sequence -5--2:  {FRAME_NUMBER}\"")
 
 # test expression substitution
 command += oiiotool ("src/tahoe-small.tif --pattern fill:top=0,0,0,0:bottom=0,0,1,1 " +
@@ -229,15 +221,18 @@ command += oiiotool ("src/tahoe-small.tif -cut '{TOP.width-20* 2}x{TOP.height-40
 command += oiiotool ("src/tahoe-small.tif -o exprstrcat{TOP.compression}.tif")
 command += oiiotool ("src/tahoe-tiny.tif -subc '{TOP.MINCOLOR}' -divc '{TOP.MAXCOLOR}' -o tahoe-contraststretch.tif")
 
-# test --no-autopremult on a TGA file thet needs it.
-command += oiiotool ("--no-autopremult src/rgba.tga --ch R,G,B -o rgbfromtga.png")
-
 # test --iconfig
 command += oiiotool ("--info -v -metamatch Debug --iconfig oiio:DebugOpenConfig! 1 black.tif")
 
 # test -i:ch=...
 command += oiiotool ("--pattern fill:color=.6,.5,.4,.3,.2 64x64 5 -d uint8 -o const5.tif")
 command += oiiotool ("-i:ch=R,G,B const5.tif -o const5-rgb.tif")
+
+# Test that combining two images, if the first has no alpha but the second
+# does, gets the right channel names instead of just copying from the first.
+command += oiiotool ("-pattern constant:color=1,0,0 64x64 3 -pattern constant:color=0,1,0,1 64x64 4 -add -o add_rgb_rgba.exr")
+command += info_command ("add_rgb_rgba.exr", safematch=True)
+
 
 # To add more tests, just append more lines like the above and also add
 # the new 'feature.tif' (or whatever you call it) to the outputs list,
@@ -261,13 +256,11 @@ outputs = [
             "cpow1.exr", "cpow2.exr",
             "abs.exr", "absdiff.exr", "absdiffc.exr",
             "chsum.tif",
-            "colormap-spectrum.tif", "colormap-custom.tif",
             "rgbahalf-zfloat.exr",
-            "tahoe-filled.tif",
+            "tahoe-filled.tif", "growholes.tif",
             "rangecompress.tif", "rangeexpand.tif",
             "rangecompress-luma.tif", "rangeexpand-luma.tif",
             "grid-clamped.tif",
-            "unpremult.exr", "premult.exr",
             "bsplinekernel.exr", "bspline-blur.tif",
             "gauss5x5-blur.tif", "tahoe-median.tif",
             "dilate.tif", "erode.tif",
@@ -277,7 +270,6 @@ outputs = [
             "labeladd.exr",
             "exprgradient.tif", "exprcropped.tif", "exprstrcatlzw.tif",
             "tahoe-contraststretch.tif",
-            "rgbfromtga.png",
             "const5-rgb.tif",
             "out.txt" ]
 
