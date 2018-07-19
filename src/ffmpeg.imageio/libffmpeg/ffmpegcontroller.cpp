@@ -87,6 +87,7 @@ FFmpegController::FFmpegController ()
     , m_codec_context(NULL)
     , m_codec(NULL)
     , m_avframe(NULL)
+    , m_rgb_frame(nullptr)
     , m_convert_context(NULL)
     , m_format_context(NULL)
     , m_fps_num(1)
@@ -623,7 +624,7 @@ FFmpegController::read_frame (int frame)
             ++m_decode_latency;
             if (m_decode_latency > codec_delay())
             {
-                int seek_target;
+                int seek_target = -1;
                 if (await)
                 {
                     if (m_decode_next_frame_out > 0)
