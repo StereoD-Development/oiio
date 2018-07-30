@@ -31,6 +31,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
+#include <memory>
 
 #include <OpenEXR/ImathColor.h>
 
@@ -72,7 +73,7 @@ private:
     bool m_keep_unassociated_alpha;   ///< Do not convert unassociated alpha
 
     // For in-memory blobs \/
-    OIIO::no_copy_membuf m_stream;
+    std::unique_ptr<OIIO::no_copy_membuf> m_stream;
 
     /// Reset everything to initial state
     ///
@@ -82,7 +83,7 @@ private:
         m_png = NULL;
         m_info = NULL;
         m_buf.clear ();
-        m_stream.clear ();
+        m_stream->clear ();
         m_next_scanline = 0;
         m_keep_unassociated_alpha = false;
     }
@@ -201,8 +202,8 @@ PNGInput::open (char *buffer, size_t size, ImageSpec &newspec)
     }
 
     // Read 8 bytes from our new stream.
-    m_stream = OIIO::no_copy_membuf(buffer, size);
-    m_stream.read((char *)pngsig, PNGSIGSIZE);
+    m_stream.reset(new OIIO::no_copy_membuf(buffer, size));
+    m_stream->read((char *)pngsig, PNGSIGSIZE);
 
     is_png = png_sig_cmp(pngsig, 0, PNGSIGSIZE);
     if (is_png != 0) {
@@ -219,7 +220,7 @@ PNGInput::open (char *buffer, size_t size, ImageSpec &newspec)
 
     // We set the custom read function up so that OIIO can use
     // our memory buffer to read.
-    png_set_read_fn (m_png, (png_voidp)&m_stream, PNG_pvt::read_buffer_data);
+    png_set_read_fn (m_png, (png_voidp)m_stream.get(), PNG_pvt::read_buffer_data);
     png_set_sig_bytes (m_png, PNGSIGSIZE);  // already read 8 bytes
 
     PNG_pvt::read_info (m_png, m_info, m_bit_depth, m_color_type,

@@ -311,7 +311,7 @@ int64_t
 FFmpegController::open (char *buffer, size_t size, ImageSpec &spec, ImageInput *inp)
 {
 
-    m_stream = OIIO::no_copy_membuf (buffer, size);
+    m_stream.reset(new OIIO::no_copy_membuf (buffer, size));
     // Give the avio_alloc_context buffer some space
     m_context_buffer = (uint8_t*)av_malloc (OIIO_FFMPEG_BUF_SIZE);
     if (!m_context_buffer)
@@ -325,7 +325,7 @@ FFmpegController::open (char *buffer, size_t size, ImageSpec &spec, ImageInput *
     m_format_context = avformat_alloc_context ();
     m_format_context->pb = avio_alloc_context (
         (unsigned char*)m_context_buffer, OIIO_FFMPEG_BUF_SIZE,
-        0, &m_stream, ffmpeg_sio::read_packet, NULL, ffmpeg_sio::seek
+        0, m_stream.get(), ffmpeg_sio::read_packet, NULL, ffmpeg_sio::seek
     );
     if (!m_format_context->pb)
     {

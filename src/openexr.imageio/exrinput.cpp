@@ -112,18 +112,18 @@ public:
         isbuffer = false;
     }
     OpenEXRInputStream (char *buffer, size_t size) : Imf::IStream("blank") {
-        stream = OIIO::no_copy_membuf(buffer, size);
+        stream.reset(new OIIO::no_copy_membuf(buffer, size));
         isbuffer = true;
     }
     virtual bool read (char c[], int n) {
         if (isbuffer) { // Using in-mem file buffer
-            if (!stream.valid() || stream.end_of_buffer())
+            if (!stream->valid() || stream->end_of_buffer())
             {
                 throw Iex::InputExc("Unexpected end of file.");
             }
 
             errno = 0;
-            stream.read (c, n);
+            stream->read (c, n);
         }
         else {
             if (!ifs) 
@@ -137,7 +137,7 @@ public:
     virtual Imath::Int64 tellg () {
         if (isbuffer)
         {
-            return std::streamoff(stream.tellg ());
+            return std::streamoff(stream->tellg ());
         }
         else
         {
@@ -146,7 +146,7 @@ public:
     }
     virtual void seekg (Imath::Int64 pos) {
         if (isbuffer) {
-            stream.seekg (pos);
+            stream->seekg (pos);
         }
         else {
             ifs.seekg (pos);
@@ -156,7 +156,7 @@ public:
     virtual void clear () {
         if (isbuffer)
         {
-            stream.clear ();
+            stream->clear ();
         }
         else
             ifs.clear ();
@@ -167,14 +167,14 @@ public:
         int /*_magic,*/ version;
 
         signed char b[4];
-        stream.seekg(4);
+        stream->seekg(4);
         // stream.read((char *)b, 4);
         // _magic = val_shift(b);
 
         read((char *)b, 4);
         version = val_shift(b);
 
-        stream.seekg(0); // Must Seek
+        stream->seekg(0); // Must Seek
 
         return Imf::isTiled(version);
     }
@@ -188,7 +188,7 @@ private:
                (d[3] << 24);
     }
     bool check_error () {
-        if (!ifs && !stream.valid()) {
+        if (!ifs && !stream->valid()) {
             if (errno) 
                 Iex::throwErrnoExc ();
 
@@ -198,7 +198,7 @@ private:
     }
     OIIO::ifstream ifs;
     // For in-memory based files \/
-    OIIO::no_copy_membuf stream;
+    std::unique_ptr<OIIO::no_copy_membuf> stream;
     bool isbuffer;
 };
 

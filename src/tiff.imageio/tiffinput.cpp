@@ -182,7 +182,7 @@ private:
 
     // For in-memory storage
     OIIO::istream_ptr m_stream;  ///< Memory Stream Pointer
-    OIIO::no_copy_membuf m_buf;  ///< Copy-less Memory Buffer
+    std::unique_ptr<OIIO::no_copy_membuf> m_buf;  ///< Copy-less Memory Buffer
     bool m_isbuffer;             ///< Check for when using memory buffer
 
     // Reset everything to initial state
@@ -601,8 +601,8 @@ TIFFInput::open (char *buffer, size_t size, ImageSpec &newspec)
     oiio_tiff_set_error_handler ();
     init ();
     m_filename = std::string ("MemoryBuffer"); // Doesn't point to anything.
-    m_buf = OIIO::no_copy_membuf (buffer, size);
-    m_stream = new OIIO::istream (&m_buf);
+    m_buf.reset(new OIIO::no_copy_membuf (buffer, size));
+    m_stream = new OIIO::istream (m_buf.get());
     m_subimage = -1;
     return seek_subimage(0, 0, newspec);
 }

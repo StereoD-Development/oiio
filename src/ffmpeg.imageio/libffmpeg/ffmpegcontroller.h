@@ -36,6 +36,7 @@
 #include <OpenImageIO/imageio.h>
 #include <OpenImageIO/stream.h>
 #include <iostream>
+#include <memory>
 
 OIIO_NAMESPACE_BEGIN
 
@@ -138,7 +139,7 @@ public:
     size_t m_stride;                   ///< How far, in bytes, is a single line
 
     std::string m_filename;        ///< For when using a file directly
-    OIIO::no_copy_membuf m_stream; ///< For in-memory files.
+    std::unique_ptr<OIIO::no_copy_membuf> m_stream; ///< For in-memory files.
     uint8_t *m_context_buffer;     ///< The buffer for housing operations.
 
     std::string m_error_string; ///< The error string (if any)
