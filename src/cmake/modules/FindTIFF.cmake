@@ -42,6 +42,10 @@ find_library(TIFF_LIBRARY NAMES ${TIFF_NAMES} )
 set(TIFFXX_NAMES ${TIFFXX_NAMES} tiffxx libtiffxx tiff3xx libtiff3xx)
 find_library(TIFFXX_LIBRARY NAMES ${TIFFXX_NAMES} )
 
+# We also want the LZMA library, in case we're doing a static link.
+set(LZMA_NAMES ${LZMA_NAMES} lzma liblzma)
+find_library(LZMA_LIBRARY NAMES ${LZMA_NAMES})
+
 if(TIFF_INCLUDE_DIR AND EXISTS "${TIFF_INCLUDE_DIR}/tiffvers.h")
     file(STRINGS "${TIFF_INCLUDE_DIR}/tiffvers.h" tiff_version_str
          REGEX "^#define[\t ]+TIFFLIB_VERSION_STR[\t ]+\"LIBTIFF, Version .*")
@@ -59,7 +63,7 @@ FIND_PACKAGE_HANDLE_STANDARD_ARGS(TIFF
                                   VERSION_VAR TIFF_VERSION_STRING)
 
 if(TIFF_FOUND)
-  set( TIFF_LIBRARIES ${TIFF_LIBRARY} ${TIFFXX_LIBRARY} )
+  set( TIFF_LIBRARIES ${TIFF_LIBRARY} ${TIFFXX_LIBRARY} ${LZMA_LIBRARY})
 endif()
 
-mark_as_advanced(TIFF_INCLUDE_DIR TIFF_LIBRARY TIFFXX_LIBRARY)
+mark_as_advanced(TIFF_INCLUDE_DIR TIFF_LIBRARY TIFFXX_LIBRARY LZMA_LIBRARY)
