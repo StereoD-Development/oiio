@@ -395,7 +395,7 @@ FFmpegController::convert_context ()
 int
 FFmpegController::codec_delay () const
 {
-    if (m_codec->capabilities & CODEC_CAP_DELAY)
+    if (m_codec->capabilities & AV_CODEC_CAP_DELAY)
         return m_codec_context->delay + m_codec_context->has_b_frames;
     return m_codec_context->has_b_frames;
 }
