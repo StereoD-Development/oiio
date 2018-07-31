@@ -52,6 +52,12 @@ if (APPLE)
 else ()
    target_link_libraries (${target_name} OpenImageIO ${SANITIZE_LIBRARIES} ${Boost_LIBRARIES} ${PYTHON_LIBRARIES} ${CMAKE_DL_LIBS})
 endif ()
+message("FLAGS: ${LINUX} ${BUILDSTATIC} ${USE_FFMPEG}")
+
+if (${CMAKE_SYSTEM_NAME} STREQUAL "Linux" AND BUILDSTATIC AND USE_FFMPEG)
+    # This allows us to link statically with ffmpeg
+    set_target_properties (${target_name} PROPERTIES LINK_FLAGS "-Wl,-Bsymbolic")
+endif ()
 
     # Exclude the 'lib' prefix from the name
 if(NOT PYLIB_LIB_PREFIX)

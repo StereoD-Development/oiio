@@ -307,9 +307,9 @@ if (BUILDSTATIC)
     set (LIBRARY_BUILD_TYPE STATIC)
     add_definitions(-D${PROJ_NAME}_STATIC_BUILD=1)
     if (${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
-        # On Linux, the lack of -fPIC when building static libraries seems
-        # incompatible with the dynamic library needed for the Python bindings.
-        set (USE_PYTHON OFF)
+	# Make sure we build the static libraries as position-indepdendent code,
+	# otherwise we can't inke the Python module DSO.
+	add_definitions("-fPIC")
     endif ()
 else ()
     set (LIBRARY_BUILD_TYPE SHARED)
