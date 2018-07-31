@@ -31,10 +31,15 @@
 #ifndef PYOPENIMAGEIO_PY_OIIO_H
 #define PYOPENIMAGEIO_PY_OIIO_H
 
-#include <memory>
 
 // Avoid a compiler warning from a duplication in tiffconf.h/pyconfig.h
 #undef SIZEOF_LONG
+
+#include <pybind11/pybind11.h>
+#include <pybind11/numpy.h>
+#include <pybind11/operators.h>
+#include <pybind11/stl.h>
+namespace py = pybind11;
 
 #include <OpenEXR/half.h>
 
@@ -45,12 +50,8 @@
 #include <OpenImageIO/deepdata.h>
 #include <OpenImageIO/array_view.h>
 
-#include <pybind11/pybind11.h>
-#include <pybind11/numpy.h>
-#include <pybind11/operators.h>
-#include <pybind11/stl.h>
-namespace py = pybind11;
 
+#include <memory>
 
 #if PY_MAJOR_VERSION == 2
 // Preferred Python string caster for Python2 is py::bytes, so it's a byte
