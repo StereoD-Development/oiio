@@ -83,7 +83,6 @@ private:
         m_png = NULL;
         m_info = NULL;
         m_buf.clear ();
-        m_stream->clear ();
         m_next_scanline = 0;
         m_keep_unassociated_alpha = false;
     }
